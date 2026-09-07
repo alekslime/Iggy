@@ -1,6 +1,6 @@
 from pathlib import Path
 import subprocess
-
+import shlex
 
 IGNORED_DIRECTORIES = {
     ".venv",
@@ -12,6 +12,14 @@ IGNORED_DIRECTORIES = {
     "node_modules",
 }
 
+ALLOWED_COMMANDS = {
+    "pwd",
+    "ls",
+    "find",
+    "python",
+    "pytest",
+    "git",
+}
 
 def get_project_root() -> Path:
     """Return the root directory of the project."""
@@ -48,6 +56,43 @@ def git_status() -> str:
         )
 
     return result.stdout.strip()
+
+def run_command(command: str) -> str:
+    """Run an allowed command safely inside the project directory."""
+
+    if not command.strip():
+        raise ValueError("Command cannot be empty.")
+
+    args = shlex.split(command)
+
+    if not args:
+        raise ValueError("Command cannot be empty.")
+
+    command_name = args[0]
+
+    if command_name not in ALLOWED_COMMANDS:
+        raise PermissionError(
+            f"Command not allowed: {command_name}"
+        )
+
+    project_root = get_project_root()
+
+    result = subprocess.run(
+        args,
+        cwd=project_root,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+        shell=False,
+    )
+
+    output = result.stdout
+
+    if result.stderr:
+        output += result.stderr
+
+    return output.strip()
 
 
 def list_files(root: str = ".") -> list[str]:
@@ -155,4 +200,5 @@ TOOLS = {
     "read_file": read_file,
     "search_files": search_files,
     "git_status": git_status,
+    "run_command": run_command,
 }
