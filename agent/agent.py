@@ -1,3 +1,4 @@
+
 import json
 
 import ollama
@@ -58,11 +59,16 @@ Available tools:
 - search_files(query): searches project files for matching text and returns file names, line numbers, and matching lines.
 - git_status(): returns the current Git working tree status.
 - run_command(command): runs an approved command inside the project.
+- write_file(path, content): writes or replaces a file inside the project after requesting user permission.
 
 Rules:
 - Use search_files when you need to find specific code, variables, functions, classes, imports, or text.
 - Use list_files when you need to discover the project structure.
 - Use read_file when you need to understand the contents of a file.
+- Use write_file when you need to create or modify project files.
+- Before modifying an existing file, read it first unless the file contents are already available in the conversation.
+- Do not modify files blindly.
+- If you need to modify a file, inspect the relevant code first, determine the required change, then use write_file.
 - If you do not have enough information to answer confidently, use the appropriate tool.
 - Do not claim to know what code does unless you have inspected the relevant files.
 - Never access files outside the project directory.
@@ -70,6 +76,9 @@ Rules:
 - Do not put markdown around JSON.
 - After receiving a tool result, decide what to do next.
 - Use git_status when the user asks about Git status, modified files, untracked files, staged files, or changes in the working tree.
+- When a file modification is denied, do not pretend that it succeeded.
+- After modifying a file, verify the result when possible.
+- Distinguish between a change being written and a change being verified.
 """
 
 
@@ -124,7 +133,7 @@ def normalize_tool_name(tool_name):
     if not isinstance(tool_name, str):
         return tool_name
 
-    # DeepSeek may return:
+    # Some models may return:
     # list_files(root)
     #
     # instead of:
