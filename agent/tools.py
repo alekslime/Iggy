@@ -165,6 +165,34 @@ def read_file(path: str) -> str:
     return file_path.read_text(encoding="utf-8")
 
 
+def write_file(path: str, content: str) -> str:
+    """Write a text file inside the project after requesting permission."""
+
+    if not path.strip():
+        raise ValueError("File path cannot be empty.")
+
+    project_root = get_project_root()
+    file_path = (project_root / path).resolve()
+
+    if not is_safe_path(file_path, project_root):
+        raise PermissionError(
+            "Access denied: file is outside the project directory."
+        )
+
+    if file_path.exists() and not file_path.is_file():
+        raise IsADirectoryError(
+            f"Not a file: {path}"
+        )
+
+    if not request_permission(f"modify file: {path}"):
+        return "File modification denied by user."
+
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    file_path.write_text(content, encoding="utf-8")
+
+    return f"File written successfully: {path}"
+
+
 def search_files(query: str) -> list[dict]:
     """Search for text inside project files."""
 
@@ -209,4 +237,5 @@ TOOLS = {
     "search_files": search_files,
     "git_status": git_status,
     "run_command": run_command,
+    "write_file": write_file,
 }
