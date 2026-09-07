@@ -78,15 +78,58 @@ def read_file(path: str) -> str:
         )
 
     if not file_path.exists():
-        raise FileNotFoundError(f"File does not exist: {path}")
+        raise FileNotFoundError(
+            f"File does not exist: {path}"
+        )
 
     if not file_path.is_file():
-        raise IsADirectoryError(f"Not a file: {path}")
+        raise IsADirectoryError(
+            f"Not a file: {path}"
+        )
 
     return file_path.read_text(encoding="utf-8")
+
+
+def search_files(query: str) -> list[dict]:
+    """Search for text inside project files."""
+
+    project_root = get_project_root()
+    results = []
+
+    if not query:
+        raise ValueError("Search query cannot be empty.")
+
+    for path in project_root.rglob("*"):
+
+        if not path.is_file():
+            continue
+
+        if any(part in IGNORED_DIRECTORIES for part in path.parts):
+            continue
+
+        try:
+            content = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+
+        for line_number, line in enumerate(
+            content.splitlines(),
+            start=1,
+        ):
+
+            if query.lower() in line.lower():
+
+                results.append({
+                    "file": str(path.relative_to(project_root)),
+                    "line": line_number,
+                    "text": line.strip(),
+                })
+
+    return results
 
 
 TOOLS = {
     "list_files": list_files,
     "read_file": read_file,
+    "search_files": search_files,
 }

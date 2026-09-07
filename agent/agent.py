@@ -5,7 +5,7 @@ import ollama
 from agent.tools import TOOLS
 
 
-MODEL = "deepseek-r1:8b"
+MODEL = "qwen2.5-coder:3b"
 MAX_TOOL_CALLS = 5
 
 client = ollama.Client(host="http://127.0.0.1:11434")
@@ -32,13 +32,40 @@ When you can answer without a tool, respond with ONLY valid JSON:
     "answer": "your answer"
 }
 
+JSON formatting rules:
+- Your entire response must be valid JSON.
+- Never put literal newlines inside JSON string values.
+- Use escaped newlines (\\n) inside strings when needed.
+- Use double quotes for JSON strings.
+
+Before answering, ask yourself:
+
+1. Can I answer this using only the conversation?
+2. If NO, which tool gives me the missing information?
+3. Call that tool.
+4. After receiving the result, decide whether another tool is needed.
+5. Only then return "none".
+
+- For search_files, use short, exact keywords rather than descriptive phrases.
+- For example, search for "ollama", not "Ollama usage".
+- For list_files, use "." for the project root unless you have a specific directory name from a previous tool result.
+- Never invent directory names or paths.
+- Tool arguments must refer to real paths or values supported by the tool.
+
 Available tools:
 - list_files(root): lists relevant files inside a project directory.
+- read_file(path): reads a text file inside the project directory.
+- search_files(query): searches project files for matching text and returns file names, line numbers, and matching lines.
 
 Rules:
+- Use search_files when you need to find specific code, variables, functions, classes, imports, or text.
+- Use list_files when you need to discover the project structure.
+- Use read_file when you need to understand the contents of a file.
+- If you do not have enough information to answer confidently, use the appropriate tool.
+- Do not claim to know what code does unless you have inspected the relevant files.
+- Never access files outside the project directory.
 - Do not invent tools.
 - Do not put markdown around JSON.
-- Use tools when they are useful.
 - After receiving a tool result, decide what to do next.
 """
 
@@ -119,7 +146,7 @@ def run_agent(messages: list[dict]):
 
         raw_response = response.message.content
 
-        print(f"\nDeepSeek raw response:\n{raw_response}")
+        print(f"\nModel raw response:\n{raw_response}")
 
         try:
             action = parse_action(raw_response)
@@ -234,12 +261,7 @@ def main():
         answer = run_agent(messages)
 
         if answer is not None:
-            print(f"\nDeepSeek: {answer}")
-
-            messages.append({
-                "role": "assistant",
-                "content": answer,
-            })
+            print(f"\nIggy: {answer}")
 
 
 if __name__ == "__main__":
