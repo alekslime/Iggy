@@ -56,6 +56,7 @@ Available tools:
 - list_files(root): lists relevant files inside a project directory.
 - read_file(path): reads a text file inside the project directory.
 - search_files(query): searches project files for matching text and returns file names, line numbers, and matching lines.
+- git_status(): returns the current Git working tree status.
 
 Rules:
 - Use search_files when you need to find specific code, variables, functions, classes, imports, or text.
@@ -67,6 +68,7 @@ Rules:
 - Do not invent tools.
 - Do not put markdown around JSON.
 - After receiving a tool result, decide what to do next.
+- Use git_status when the user asks about Git status, modified files, untracked files, staged files, or changes in the working tree.
 """
 
 

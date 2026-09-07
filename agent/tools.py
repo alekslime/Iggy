@@ -1,4 +1,5 @@
 from pathlib import Path
+import subprocess
 
 
 IGNORED_DIRECTORIES = {
@@ -26,6 +27,27 @@ def is_safe_path(path: Path, root: Path) -> bool:
         return True
     except ValueError:
         return False
+
+
+def git_status() -> str:
+    """Return the current Git status of the project."""
+
+    project_root = get_project_root()
+
+    result = subprocess.run(
+        ["git", "status", "--short"],
+        cwd=project_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    if result.returncode != 0:
+        raise RuntimeError(
+            result.stderr.strip() or "Git status failed."
+        )
+
+    return result.stdout.strip()
 
 
 def list_files(root: str = ".") -> list[str]:
@@ -132,4 +154,5 @@ TOOLS = {
     "list_files": list_files,
     "read_file": read_file,
     "search_files": search_files,
+    "git_status": git_status,
 }
