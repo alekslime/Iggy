@@ -57,6 +57,7 @@ Available tools:
 - read_file(path): reads a text file inside the project directory.
 - search_files(query): searches project files for matching text and returns file names, line numbers, and matching lines.
 - git_status(): returns the current Git working tree status.
+- run_command(command): runs an approved command inside the project.
 
 Rules:
 - Use search_files when you need to find specific code, variables, functions, classes, imports, or text.
