@@ -1,6 +1,9 @@
 from pathlib import Path
-import subprocess
 import shlex
+import subprocess
+
+from agent.permissions import request_permission
+
 
 IGNORED_DIRECTORIES = {
     ".venv",
@@ -20,6 +23,7 @@ ALLOWED_COMMANDS = {
     "pytest",
     "git",
 }
+
 
 def get_project_root() -> Path:
     """Return the root directory of the project."""
@@ -57,8 +61,9 @@ def git_status() -> str:
 
     return result.stdout.strip()
 
+
 def run_command(command: str) -> str:
-    """Run an allowed command safely inside the project directory."""
+    """Run an allowed command after requesting user permission."""
 
     if not command.strip():
         raise ValueError("Command cannot be empty.")
@@ -74,6 +79,9 @@ def run_command(command: str) -> str:
         raise PermissionError(
             f"Command not allowed: {command_name}"
         )
+
+    if not request_permission(f"run: {command}"):
+        return "Command denied by user."
 
     project_root = get_project_root()
 
