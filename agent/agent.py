@@ -1,10 +1,11 @@
 import difflib
 import json
 import re
+from pathlib import Path
 
 import ollama
 
-from agent.tools import TOOLS, read_file, restore_file_content
+from agent.tools import TOOLS, list_files, read_file, restore_file_content
 
 
 MODEL = "qwen2.5-coder:3b"
@@ -31,6 +32,15 @@ MAX_INVALID_ACTION_ATTEMPTS = 3
 # the requested text but also destroyed unrelated parts of the file.
 # A different failure class again: the tool call itself worked fine.
 MAX_SEMANTIC_RETRY_ATTEMPTS = 2
+
+# How many times the agent is forced to retry after a modification that
+# *succeeded*, and passed semantic verification, but appears to have
+# landed on the wrong file entirely (M7.7) -- e.g. the request named
+# `utils.py` but the edit was made to `helpers/utils.py`, or the
+# project has two files with that name and it's not clear which one
+# was meant. Yet another distinct failure class: the edit itself may be
+# perfectly correct, just applied to the wrong target.
+MAX_WRONG_FILE_RETRY_ATTEMPTS = 2
 
 # Fraction of a file's original content that must still be recognizable
 # afterwards for a modification to NOT be considered destructive, used
@@ -117,6 +127,22 @@ CHANGE_PAIR_PATTERNS = (
         ),
         ("new",),
     ),
+)
+
+# M7.7 uses a small allowlist of common source/config extensions to
+# find filename-like tokens in a user's request (e.g. "utils.py",
+# "agent/tools.py"). Restricting to known extensions -- rather than
+# matching any "word.word" pattern -- avoids false positives like
+# "e.g." or a version number such as "v2.0".
+_FILENAME_EXTENSIONS = (
+    "py|js|jsx|ts|tsx|json|md|txt|ya?ml|toml|cfg|ini|sh|bash|"
+    "css|s?css|html?|java|kt|swift|cpp|cc|cxx|c|h|hpp|go|rs|rb|"
+    "php|sql|xml|csv|env|gitignore|dockerfile"
+)
+
+FILENAME_PATTERN = re.compile(
+    rf"\b[\w\-./\\]*\.(?:{_FILENAME_EXTENSIONS})\b",
+    re.IGNORECASE,
 )
 
 client = ollama.Client(host="http://127.0.0.1:11434")
@@ -574,6 +600,145 @@ def verify_semantic_edit(
     return None
 
 
+# -----------------------------------------------------------------------
+# M7.7 -- wrong-file edit detection
+# -----------------------------------------------------------------------
+#
+# M7.6 checks whether an edit's *content* matches what was requested,
+# but assumes the edit landed on the right file. It doesn't. The
+# triggering failure class: the request names one file (explicitly or
+# by a bare filename that's ambiguous across the project), but the
+# model modifies a different one -- a similarly-named file elsewhere, a
+# hallucinated path, or a stale target left over from earlier in the
+# conversation. The edit itself can be flawless and still be wrong.
+#
+# Like M7.6, this is post-execution only and regex/list-based (no AST,
+# no project-graph tracing of "which file the user meant"). It can only
+# reason from filenames the user's own request actually mentions.
+
+
+def extract_mentioned_filenames(text: str) -> set[str]:
+    """Best-effort extraction of filename-like tokens from a user
+    request (e.g. "fix the bug in utils.py" -> {"utils.py"}).
+
+    Restricted to a common-extension allowlist (FILENAME_PATTERN) so
+    this doesn't fire on unrelated "word.word" text. Returns an empty
+    set if nothing recognizable was found -- callers should treat that
+    as "cannot verify", not "no filename was intended".
+    """
+
+    if not isinstance(text, str):
+        return set()
+
+    return {
+        match.strip("`'\" ").lstrip("./")
+        for match in FILENAME_PATTERN.findall(text)
+    }
+
+
+def verify_target_file(path: str, last_user_request: str):
+    """Post-execution check: does the file that was just modified match
+    what the user's request actually named?
+
+    Returns None if the result looks consistent with the request (or if
+    there's not enough evidence in the request to check at all), or a
+    human-readable explanation naming the correct file(s) if not.
+
+    Only meaningful when the request mentions at least one filename --
+    most requests don't spell one out explicitly ("fix the bug"), and
+    for those this correctly returns None rather than guessing.
+    """
+
+    mentioned = extract_mentioned_filenames(last_user_request)
+
+    if not mentioned:
+        return None
+
+    if not isinstance(path, str) or not path.strip():
+        return None
+
+    target_name = Path(path).name
+    target_norm = path.replace("\\", "/")
+
+    matches_target = any(
+        Path(m).name == target_name or m.replace("\\", "/") == target_norm
+        for m in mentioned
+    )
+
+    try:
+        project_files = list_files(".")
+    except Exception:
+        # Can't enumerate the project -- nothing safe to check against.
+        return None
+
+    if matches_target:
+
+        # Even a match can be ambiguous: the request may have named a
+        # bare filename (no directory) that exists in more than one
+        # place in the project, so hitting *a* file called that isn't
+        # the same as hitting the *right* one.
+        bare_mentions = {
+            m for m in mentioned
+            if Path(m).name == target_name and "/" not in m and "\\" not in m
+        }
+
+        if not bare_mentions:
+            return None
+
+        candidates = [f for f in project_files if Path(f).name == target_name]
+
+        if len(candidates) <= 1:
+            return None
+
+        candidate_list = "\n".join(f"  - {c}" for c in candidates)
+
+        return (
+            f"The request mentioned `{target_name}`, but multiple files "
+            f"with that name exist in the project:\n{candidate_list}\n\n"
+            f"`{path}` was modified, but it isn't clear that's the one "
+            "meant. Check for context clues (imports, surrounding code, "
+            "directory structure) to determine the correct file, then "
+            "redo the modification there. Revert this change if it "
+            "turns out to be the wrong file."
+        )
+
+    # The edited file doesn't match anything the request mentioned --
+    # look for a project file that does, to redirect to.
+    redirect_candidates = []
+
+    for mention in mentioned:
+        mention_name = Path(mention).name
+
+        for f in project_files:
+            if Path(f).name == mention_name and f not in redirect_candidates:
+                redirect_candidates.append(f)
+
+    if not redirect_candidates:
+        # Nothing in the project matches what was mentioned either --
+        # not enough evidence to call this a wrong-file edit (e.g. a
+        # new file being created, or a generic/example name).
+        return None
+
+    if len(redirect_candidates) == 1:
+        return (
+            f"The request mentioned `{redirect_candidates[0]}`, but the "
+            f"modification was made to `{path}` instead, which doesn't "
+            "match anything the request named.\n\n"
+            f"Revert this change and apply it to "
+            f"`{redirect_candidates[0]}` instead."
+        )
+
+    candidate_list = "\n".join(f"  - {c}" for c in redirect_candidates)
+
+    return (
+        f"The modification was made to `{path}`, which doesn't match "
+        f"anything the request named. Project files matching what was "
+        f"mentioned:\n{candidate_list}\n\n"
+        "Check which one the request actually meant, then revert this "
+        "change and redo the modification on the correct file."
+    )
+
+
 def run_agent(messages: list[dict]):
     """Run the agent until it produces a final answer."""
 
@@ -597,6 +762,16 @@ def run_agent(messages: list[dict]):
     pending_semantic_recovery = False
     semantic_recovery_attempts = 0
     last_semantic_failure_message = None
+
+    # M7.7 recovery state: tracks whether the most recent modification
+    # succeeded and passed semantic verification, but appears to have
+    # landed on the wrong file (name mismatch or unresolved ambiguity
+    # against the user's request), and how many times we've forced a
+    # retry on the correct file instead of letting the agent claim
+    # success.
+    pending_wrong_file_recovery = False
+    wrong_file_recovery_attempts = 0
+    last_wrong_file_failure_message = None
 
     # M7.6: the genuine user request driving this run, captured once up
     # front. Used to infer edit intent (small targeted change vs. full
@@ -736,6 +911,41 @@ def run_agent(messages: list[dict]):
 
                 continue
 
+            if (
+                pending_wrong_file_recovery
+                and wrong_file_recovery_attempts < MAX_WRONG_FILE_RETRY_ATTEMPTS
+            ):
+
+                wrong_file_recovery_attempts += 1
+
+                print(
+                    "\nRejecting premature final answer: the last "
+                    "modification appears to have landed on the wrong "
+                    f"file (forced retry {wrong_file_recovery_attempts}/"
+                    f"{MAX_WRONG_FILE_RETRY_ATTEMPTS})."
+                )
+
+                messages.append({
+                    "role": "assistant",
+                    "content": raw_response,
+                })
+
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        "Your last modification succeeded and passed "
+                        "content verification, but appears to have been "
+                        "made to the wrong file, so the task is not "
+                        "complete and the file has been reverted:\n\n"
+                        f"{last_wrong_file_failure_message}\n\n"
+                        "Do not tell the user the task is complete. Fix "
+                        "the issue above and retry the modification on "
+                        "the correct file."
+                    ),
+                })
+
+                continue
+
             answer = action.get("answer", "")
 
             messages.append({
@@ -861,7 +1071,15 @@ def run_agent(messages: list[dict]):
         # done what was asked (wrote the right text but destroyed the
         # rest of the file, etc). Only meaningful when we know what the
         # file looked like both before and after.
+        #
+        # M7.7: separately, a tool call can report success, write
+        # perfectly consistent content, and still have landed on the
+        # wrong file. Checked second (only if M7.6 didn't already flag
+        # a content problem) since "right file, wrong content" and
+        # "wrong file entirely" are different failure classes with
+        # their own recovery messages; a single edit only triggers one.
         semantic_failure_message = None
+        wrong_file_failure_message = None
 
         if outcome == "success" and pre_content is not None:
 
@@ -875,14 +1093,19 @@ def run_agent(messages: list[dict]):
                     last_user_request=last_user_request,
                 )
 
-        if semantic_failure_message is not None:
+                if semantic_failure_message is None:
+                    wrong_file_failure_message = verify_target_file(
+                        path=modification_path,
+                        last_user_request=last_user_request,
+                    )
+
+        if semantic_failure_message is not None or wrong_file_failure_message is not None:
 
             try:
                 restore_file_content(modification_path, pre_content)
                 print(
-                    f"\nSemantic verification failed for "
-                    f"{modification_path}; reverted to its pre-edit "
-                    "content."
+                    f"\nVerification failed for {modification_path}; "
+                    "reverted to its pre-edit content."
                 )
             except Exception as e:
                 print(
@@ -890,13 +1113,21 @@ def run_agent(messages: list[dict]):
                     f"after failed verification: {e}"
                 )
 
+        if semantic_failure_message is not None:
             pending_semantic_recovery = True
             last_semantic_failure_message = semantic_failure_message
-
         elif outcome == "success":
             pending_semantic_recovery = False
             semantic_recovery_attempts = 0
             last_semantic_failure_message = None
+
+        if wrong_file_failure_message is not None:
+            pending_wrong_file_recovery = True
+            last_wrong_file_failure_message = wrong_file_failure_message
+        elif outcome == "success" and semantic_failure_message is None:
+            pending_wrong_file_recovery = False
+            wrong_file_recovery_attempts = 0
+            last_wrong_file_failure_message = None
 
         messages.append({
             "role": "assistant",
@@ -908,6 +1139,16 @@ def run_agent(messages: list[dict]):
                 f"Tool `{tool_name}` reported success, but automatic "
                 f"verification found a problem:\n\n"
                 f"{semantic_failure_message}\n\n"
+                "The file has been reverted to its state before this "
+                "change. Do not tell the user the task is complete. Fix "
+                "the issue above and try again."
+            )
+        elif wrong_file_failure_message is not None:
+            followup_content = (
+                f"Tool `{tool_name}` reported success, and the content "
+                "looked correct, but automatic verification found a "
+                "problem with which file was modified:\n\n"
+                f"{wrong_file_failure_message}\n\n"
                 "The file has been reverted to its state before this "
                 "change. Do not tell the user the task is complete. Fix "
                 "the issue above and try again."
