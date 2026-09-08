@@ -193,6 +193,70 @@ def write_file(path: str, content: str) -> str:
     return f"File written successfully: {path}"
 
 
+def replace_in_file(
+    path: str,
+    old_text: str,
+    new_text: str,
+) -> str:
+    """Replace an exact piece of text inside a project file."""
+
+    if not path.strip():
+        raise ValueError("File path cannot be empty.")
+
+    if not old_text:
+        raise ValueError("Old text cannot be empty.")
+
+    project_root = get_project_root()
+    file_path = (project_root / path).resolve()
+
+    if not is_safe_path(file_path, project_root):
+        raise PermissionError(
+            "Access denied: file is outside the project directory."
+        )
+
+    if not file_path.exists():
+        raise FileNotFoundError(
+            f"File does not exist: {path}"
+        )
+
+    if not file_path.is_file():
+        raise IsADirectoryError(
+            f"Not a file: {path}"
+        )
+
+    content = file_path.read_text(encoding="utf-8")
+
+    occurrences = content.count(old_text)
+
+    if occurrences == 0:
+        return (
+            f"Replacement failed: exact text was not found in {path}."
+        )
+
+    if occurrences > 1:
+        return (
+            f"Replacement failed: exact text appears "
+            f"{occurrences} times in {path}. "
+            "The change was not applied."
+        )
+
+    if not request_permission(f"modify file: {path}"):
+        return "File modification denied by user."
+
+    updated_content = content.replace(
+        old_text,
+        new_text,
+        1,
+    )
+
+    file_path.write_text(
+        updated_content,
+        encoding="utf-8",
+    )
+
+    return f"Replacement applied successfully: {path}"
+
+
 def search_files(query: str) -> list[dict]:
     """Search for text inside project files."""
 
@@ -238,4 +302,5 @@ TOOLS = {
     "git_status": git_status,
     "run_command": run_command,
     "write_file": write_file,
+    "replace_in_file": replace_in_file,
 }
