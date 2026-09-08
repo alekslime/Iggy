@@ -5,7 +5,7 @@ def request_permission(action: str) -> bool:
     confirmation, returning True only on an explicit "y".
     """
 
-    print("\nIggy requests permission to:")
+    print("\nIggy needs your permission to:")
     print(f"  {action}")
 
     response = input("\nProceed? [y/N]: ").strip().lower()

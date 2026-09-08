@@ -6,7 +6,7 @@ from agent.tools import TOOLS
 
 
 MODEL = "qwen2.5-coder:3b"
-MAX_TOOL_CALLS = 5
+MAX_TOOL_CALLS = 10
 
 # Tools whose failure represents an incomplete modification, not just
 # an information-gathering step. Used to detect and recover from

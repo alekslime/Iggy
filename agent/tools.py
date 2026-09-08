@@ -1,9 +1,12 @@
+from datetime import datetime
 from pathlib import Path
 import shlex
 import subprocess
 
 from agent.permissions import request_permission
 
+
+BACKUP_DIR_NAME = ".iggy_backups"
 
 IGNORED_DIRECTORIES = {
     ".venv",
@@ -13,6 +16,7 @@ IGNORED_DIRECTORIES = {
     ".mypy_cache",
     ".ruff_cache",
     "node_modules",
+    BACKUP_DIR_NAME,
 }
 
 ALLOWED_COMMANDS = {
@@ -165,6 +169,29 @@ def read_file(path: str) -> str:
     return file_path.read_text(encoding="utf-8")
 
 
+def backup_file(file_path: Path, project_root: Path) -> str:
+    """Save a timestamped copy of a file's current content before it's
+    overwritten.
+
+    Backups are stored under .iggy_backups/, mirroring the project's
+    directory structure, with one subfolder per file and one timestamped
+    .bak per backup. Returns the backup's path relative to the project
+    root.
+    """
+
+    relative_path = file_path.relative_to(project_root)
+
+    backup_dir = project_root / BACKUP_DIR_NAME / relative_path
+    backup_dir.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+    backup_path = backup_dir / f"{timestamp}.bak"
+
+    backup_path.write_bytes(file_path.read_bytes())
+
+    return str(backup_path.relative_to(project_root))
+
+
 def write_file(path: str, content: str) -> str:
     """Write a text file inside the project after requesting permission."""
 
@@ -186,6 +213,10 @@ def write_file(path: str, content: str) -> str:
 
     if not request_permission(f"modify file: {path}"):
         return "File modification denied by user."
+
+    if file_path.exists():
+        backup_path = backup_file(file_path, project_root)
+        print(f"Backed up existing file to: {backup_path}")
 
     file_path.parent.mkdir(parents=True, exist_ok=True)
     file_path.write_text(content, encoding="utf-8")
@@ -242,6 +273,9 @@ def replace_in_file(
 
     if not request_permission(f"modify file: {path}"):
         return "File modification denied by user."
+
+    backup_path = backup_file(file_path, project_root)
+    print(f"Backed up existing file to: {backup_path}")
 
     updated_content = content.replace(
         old_text,
