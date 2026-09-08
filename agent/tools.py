@@ -169,6 +169,17 @@ def read_file(path: str) -> str:
     return file_path.read_text(encoding="utf-8")
 
 
+def is_backup_path(file_path: Path, project_root: Path) -> bool:
+    """Check whether a path falls inside Iggy's own backup directory."""
+
+    try:
+        relative_path = file_path.relative_to(project_root)
+    except ValueError:
+        return False
+
+    return BACKUP_DIR_NAME in relative_path.parts
+
+
 def backup_file(file_path: Path, project_root: Path) -> str:
     """Save a timestamped copy of a file's current content before it's
     overwritten.
@@ -206,6 +217,12 @@ def write_file(path: str, content: str) -> str:
             "Access denied: file is outside the project directory."
         )
 
+    if is_backup_path(file_path, project_root):
+        raise PermissionError(
+            "Access denied: cannot modify Iggy's own backup directory "
+            f"({BACKUP_DIR_NAME}/)."
+        )
+
     if file_path.exists() and not file_path.is_file():
         raise IsADirectoryError(
             f"Not a file: {path}"
@@ -222,6 +239,38 @@ def write_file(path: str, content: str) -> str:
     file_path.write_text(content, encoding="utf-8")
 
     return f"File written successfully: {path}"
+
+
+def restore_file_content(path: str, content: str) -> None:
+    """Overwrite a file with previously-known content, without prompting
+    for permission or creating a further backup.
+
+    This is an internal-only helper for M7.6 semantic verification: when
+    a modification tool reports success but the agent's post-hoc check
+    determines the result doesn't match what was requested, the agent
+    reverts the file to the content it captured immediately before the
+    modification (which was already safely backed up by write_file /
+    replace_in_file when the bad edit was made).
+
+    Deliberately NOT registered in TOOLS: the model can never call this
+    directly. It only runs from agent.py's own recovery logic.
+    """
+
+    project_root = get_project_root()
+    file_path = (project_root / path).resolve()
+
+    if not is_safe_path(file_path, project_root):
+        raise PermissionError(
+            "Access denied: file is outside the project directory."
+        )
+
+    if is_backup_path(file_path, project_root):
+        raise PermissionError(
+            "Access denied: cannot modify Iggy's own backup directory "
+            f"({BACKUP_DIR_NAME}/)."
+        )
+
+    file_path.write_text(content, encoding="utf-8")
 
 
 def replace_in_file(
@@ -243,6 +292,12 @@ def replace_in_file(
     if not is_safe_path(file_path, project_root):
         raise PermissionError(
             "Access denied: file is outside the project directory."
+        )
+
+    if is_backup_path(file_path, project_root):
+        raise PermissionError(
+            "Access denied: cannot modify Iggy's own backup directory "
+            f"({BACKUP_DIR_NAME}/)."
         )
 
     if not file_path.exists():
