@@ -392,6 +392,168 @@ class M76TestCase(unittest.TestCase):
         rejection_note = rejection_messages[-1]["content"]
         self.assertIn("could not be parsed as JSON", rejection_note)
 
+    # ------------------------------------------------------------------
+    # Hardening pass: broaden which phrasings extract_change_pair()
+    # recognizes, and stop the destructive-change check from
+    # false-positiving on small files / unrecognized phrasings.
+    # ------------------------------------------------------------------
+
+    def test_extract_change_pair_recognizes_common_phrasings(self):
+        cases = [
+            (
+                "Change it from `foo` to `bar`.",
+                ("foo", "bar"),
+            ),
+            (
+                "Replace `foo` with `bar` in the file.",
+                ("foo", "bar"),
+            ),
+            (
+                'Use "bar" instead of "foo" in the comment.',
+                ("foo", "bar"),
+            ),
+            (
+                "Update the docstring to say `bar`.",
+                (None, "bar"),
+            ),
+            (
+                "The comment should say `bar` please.",
+                (None, "bar"),
+            ),
+            (
+                "Say `bar` instead in that comment.",
+                (None, "bar"),
+            ),
+        ]
+
+        for request, expected in cases:
+            with self.subTest(request=request):
+                self.assertEqual(
+                    agent_module.extract_change_pair(request),
+                    expected,
+                )
+
+    def test_extract_change_pair_returns_none_for_unrecognized_phrasing(self):
+        # No quoted text at all, and nothing matching any of the known
+        # phrasings -- should cleanly fall back to None rather than
+        # guessing or raising.
+        request = "Please clean up the permissions module a bit."
+        self.assertIsNone(agent_module.extract_change_pair(request))
+
+    def test_broadened_phrasing_triggers_the_write_file_guard(self):
+        """'replace `X` with `Y`' should now also be recognized by the
+        pre-execution guard, not just the original 'from X to Y'.
+        """
+        user_request = (
+            "In `agent/permissions.py`, replace "
+            "`Ask the user for permission to perform an action.` with "
+            "`Ask the user to approve an action.`"
+        )
+
+        scripted = [
+            tool_call(
+                "write_file",
+                path="agent/permissions.py",
+                content=DESTRUCTIVE_REWRITE_CONTENT,
+            ),
+            tool_call(
+                "replace_in_file",
+                path="agent/permissions.py",
+                old_text="Ask the user for permission to perform an action.",
+                new_text="Ask the user to approve an action.",
+            ),
+            final_answer("Updated the comment."),
+        ]
+
+        answer, messages, chat = self.run_scripted(scripted, user_request)
+
+        self.assertEqual(answer, "Updated the comment.")
+        self.assertIn(
+            "def request_permission(action: str) -> bool:",
+            self.current_permissions_content(),
+        )
+
+        guard_messages = chat.calls[1]
+        self.assertIn("replace_in_file", guard_messages[-1]["content"])
+
+    def test_no_false_positive_on_small_file_without_explicit_target(self):
+        """A short file + a phrasing extract_change_pair() can't parse
+        should NOT trip the generic destructive-change check, even if
+        the resulting edit changes a large percentage of the file's
+        (tiny) content. Below MIN_LENGTH_FOR_GENERIC_DESTRUCTIVE_CHECK,
+        percentage-based comparisons are too noisy to trust.
+        """
+        small_path = self.project_root / "note.txt"
+        small_content = "TODO: fix this\n"
+        small_path.write_text(small_content, encoding="utf-8")
+
+        self.assertLess(
+            len(small_content),
+            agent_module.MIN_LENGTH_FOR_GENERIC_DESTRUCTIVE_CHECK,
+        )
+
+        user_request = "Clean up note.txt."
+
+        # A legitimate edit that happens to change most of a 15-byte
+        # file's bytes -- should NOT be treated as destructive.
+        scripted = [
+            tool_call(
+                "write_file",
+                path="note.txt",
+                content="Done: fixed already\n",
+            ),
+            final_answer("Cleaned up the note."),
+        ]
+
+        answer, messages, chat = self.run_scripted(scripted, user_request)
+
+        self.assertEqual(answer, "Cleaned up the note.")
+        self.assertEqual(
+            small_path.read_text(encoding="utf-8"),
+            "Done: fixed already\n",
+        )
+
+        followup = chat.calls[1][-1]["content"]
+        self.assertNotIn("verification found a problem", followup)
+
+    def test_destructive_check_still_applies_above_the_size_gate(self):
+        """Sanity check on the gate itself: once a file is long enough,
+        an unrecognized phrasing should still be able to trip the
+        generic destructive-change check (this is effectively a repeat
+        of test_post_hoc_verification_catches_and_reverts_destructive_edit
+        but explicitly confirms it's the size gate letting it through,
+        not a regression that disabled the check entirely).
+        """
+        self.assertGreaterEqual(
+            len(ORIGINAL_PERMISSIONS_CONTENT),
+            agent_module.MIN_LENGTH_FOR_GENERIC_DESTRUCTIVE_CHECK,
+        )
+
+        user_request = "Clean up agent/permissions.py a little."
+
+        scripted = [
+            tool_call(
+                "write_file",
+                path="agent/permissions.py",
+                content=DESTRUCTIVE_REWRITE_CONTENT,
+            ),
+        ]
+
+        chat = ScriptedChat(scripted)
+
+        with patch.object(agent_module.client, "chat", side_effect=chat):
+            messages = [
+                {"role": "system", "content": agent_module.SYSTEM_PROMPT},
+                {"role": "user", "content": user_request},
+            ]
+            with self.assertRaises(AssertionError):
+                agent_module.run_agent(messages)
+
+        self.assertEqual(
+            self.current_permissions_content(),
+            ORIGINAL_PERMISSIONS_CONTENT,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

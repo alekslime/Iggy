@@ -41,6 +41,14 @@ MAX_SEMANTIC_RETRY_ATTEMPTS = 2
 TARGETED_EDIT_PRESERVATION_THRESHOLD = 0.7
 GENERIC_PRESERVATION_THRESHOLD = 0.5
 
+# Below this many characters, percentage-of-content-preserved is too
+# noisy to be a meaningful destructive-change signal on its own (a
+# single-line file can "lose" 50%+ from a completely ordinary edit).
+# Only applies when we have no explicit edit target to anchor on --
+# targeted edits (an identified old/new pair) are checked regardless
+# of file size, since we have a much more specific expectation there.
+MIN_LENGTH_FOR_GENERIC_DESTRUCTIVE_CHECK = 200
+
 # Phrases that indicate the user actually wants a full-file rewrite, so
 # M7.6's destructive-change guard/verification should not fire.
 REWRITE_INTENT_KEYWORDS = (
@@ -60,13 +68,55 @@ REWRITE_INTENT_KEYWORDS = (
     "rewrite it completely",
 )
 
-# Matches the common "change/update ... from `X` to `Y`" phrasing used
-# for small, targeted textual edits. Deliberately simple: this is a
-# practical heuristic for M7.6, not a natural-language parser. `X`/`Y`
-# may be quoted with backticks, single, or double quotes.
-CHANGE_PAIR_PATTERN = re.compile(
-    r"from\s+[`'\"]([^`'\"]+)[`'\"]\s+to\s+[`'\"]([^`'\"]+)[`'\"]",
-    re.IGNORECASE | re.DOTALL,
+# M7.6 uses a small library of regex patterns (not a natural-language
+# parser) to recognize a handful of common ways people phrase a small,
+# targeted textual edit. Each pattern's capture groups are labeled with
+# which role ("old" and/or "new") they play; some phrasings only name
+# the desired result text and don't spell out what's being replaced.
+_QUOTE = r"[`'\"]([^`'\"]+)[`'\"]"
+
+CHANGE_PAIR_PATTERNS = (
+    # "... from `X` to `Y`" / "... change `X` to `Y`"
+    (
+        re.compile(
+            rf"(?:from|change)\s+{_QUOTE}\s+to\s+{_QUOTE}",
+            re.IGNORECASE | re.DOTALL,
+        ),
+        ("old", "new"),
+    ),
+    # "replace `X` with `Y`"
+    (
+        re.compile(
+            rf"replace\s+{_QUOTE}\s+with\s+{_QUOTE}",
+            re.IGNORECASE | re.DOTALL,
+        ),
+        ("old", "new"),
+    ),
+    # "`Y` instead of `X`"
+    (
+        re.compile(
+            rf"{_QUOTE}\s+instead\s+of\s+{_QUOTE}",
+            re.IGNORECASE | re.DOTALL,
+        ),
+        ("new", "old"),
+    ),
+    # "... to/should say `Y`" -- names the desired result, not the
+    # original text.
+    (
+        re.compile(
+            rf"(?:to|should)\s+say\s+{_QUOTE}",
+            re.IGNORECASE | re.DOTALL,
+        ),
+        ("new",),
+    ),
+    # "say `Y` instead" -- same idea, opposite word order.
+    (
+        re.compile(
+            rf"say\s+{_QUOTE}\s+instead\b",
+            re.IGNORECASE | re.DOTALL,
+        ),
+        ("new",),
+    ),
 )
 
 client = ollama.Client(host="http://127.0.0.1:11434")
@@ -313,29 +363,46 @@ def classify_modification_result(tool_name: str, result) -> str:
 
 
 def extract_change_pair(text: str):
-    """Best-effort extraction of an explicit edit target from a user
-    request, e.g. "change the comment from `A` to `B`" -> ("A", "B").
+    """Best-effort extraction of an edit target from a user request.
 
-    Returns (old_text, new_text) or None. This only recognizes one
-    common phrasing ("from X to Y") -- it's a practical heuristic, not
-    a natural-language parser, and is expected to return None for most
-    requests that don't spell out the exact before/after text.
+    Returns (old_text, new_text), where old_text may be None if the
+    request identifies what the result should say without spelling out
+    the exact text being replaced (e.g. "update the comment to say
+    `Y`"). Returns None if nothing recognizable was found.
+
+    Recognizes a handful of common phrasings via CHANGE_PAIR_PATTERNS.
+    This is a practical heuristic for M7.6, not a natural-language
+    parser -- it's expected to return None for most requests that
+    don't spell out the target text in quotes.
     """
 
     if not isinstance(text, str):
         return None
 
-    match = CHANGE_PAIR_PATTERN.search(text)
+    for pattern, roles in CHANGE_PAIR_PATTERNS:
 
-    if not match:
-        return None
+        match = pattern.search(text)
 
-    old_text, new_text = match.group(1).strip(), match.group(2).strip()
+        if not match:
+            continue
 
-    if not old_text or not new_text or old_text == new_text:
-        return None
+        values = {}
 
-    return old_text, new_text
+        for role, group in zip(roles, match.groups()):
+            values[role] = group.strip() if group else None
+
+        new_text = values.get("new")
+        old_text = values.get("old")
+
+        if not new_text:
+            continue
+
+        if old_text is not None and (not old_text or old_text == new_text):
+            continue
+
+        return old_text, new_text
+
+    return None
 
 
 def mentions_full_rewrite_intent(text: str) -> bool:
@@ -416,6 +483,14 @@ def check_unnecessary_full_rewrite(arguments: dict, last_user_request: str):
 
     old_text, new_text = pair
 
+    if old_text is None:
+        # The request named the desired result but not the exact text
+        # being replaced (e.g. "update the comment to say `Y`"), so
+        # there's nothing concrete to check occurrence-count against.
+        # Let write_file proceed; post-execution verification still
+        # covers this case.
+        return None
+
     current_content = safe_read_file(path)
 
     if current_content is None:
@@ -472,26 +547,29 @@ def verify_semantic_edit(
 
     if not mentions_full_rewrite_intent(last_user_request):
 
-        threshold = (
-            TARGETED_EDIT_PRESERVATION_THRESHOLD
-            if pair is not None
-            else GENERIC_PRESERVATION_THRESHOLD
-        )
+        if pair is not None:
+            threshold = TARGETED_EDIT_PRESERVATION_THRESHOLD
+        elif len(pre_content) >= MIN_LENGTH_FOR_GENERIC_DESTRUCTIVE_CHECK:
+            threshold = GENERIC_PRESERVATION_THRESHOLD
+        else:
+            threshold = None
 
-        preserved = content_preserved_ratio(pre_content, post_content)
+        if threshold is not None:
 
-        if preserved < threshold:
-            return (
-                f"This modification changed or removed roughly "
-                f"{round((1 - preserved) * 100)}% of `{path}`'s prior "
-                "content, which looks like an unrelated or destructive "
-                "rewrite rather than the targeted change that was "
-                "requested.\n\n"
-                "If a full rewrite was genuinely necessary, the request "
-                "should have said so explicitly. Otherwise, restore the "
-                "file's original structure and make only the specific "
-                "change requested, preferably with `replace_in_file`."
-            )
+            preserved = content_preserved_ratio(pre_content, post_content)
+
+            if preserved < threshold:
+                return (
+                    f"This modification changed or removed roughly "
+                    f"{round((1 - preserved) * 100)}% of `{path}`'s prior "
+                    "content, which looks like an unrelated or destructive "
+                    "rewrite rather than the targeted change that was "
+                    "requested.\n\n"
+                    "If a full rewrite was genuinely necessary, the request "
+                    "should have said so explicitly. Otherwise, restore the "
+                    "file's original structure and make only the specific "
+                    "change requested, preferably with `replace_in_file`."
+                )
 
     return None
 
