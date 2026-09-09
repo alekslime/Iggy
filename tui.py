@@ -51,20 +51,16 @@ import agent.tools as tools_module
 
 VERSION = "0.1.0"
 
-# Blocky "IGGY" wordmark, 5x7 dot-matrix-style letterforms. Each logical
-# pixel is rendered as 2 terminal columns wide, to compensate for
-# terminal cells being roughly twice as tall as they are wide -- a 1:1
-# mapping renders squished and unreadable.
-LOGO = "\n".join(
-    [
-        "██████████      ████████      ████████    ██      ██",
-        "    ██        ██            ██            ██      ██",
-        "    ██        ██            ██              ██  ██  ",
-        "    ██        ██  ██████    ██  ██████        ██    ",
-        "    ██        ██      ██    ██      ██        ██    ",
-        "    ██        ██      ██    ██      ██        ██    ",
-        "██████████      ████████      ████████        ██    ",
-    ]
+LOGO = (
+    "░██                                 \n"
+    "                                    \n"
+    "░██ ░████████  ░████████ ░██    ░██ \n"
+    "░██░██    ░██ ░██    ░██ ░██    ░██ \n"
+    "░██░██    ░██ ░██    ░██ ░██    ░██ \n"
+    "░██░██   ░███ ░██   ░███ ░██   ░███ \n"
+    "░██ ░█████░██  ░█████░██  ░█████░██ \n"
+    "          ░██        ░██        ░██ \n"
+    "    ░███████   ░███████   ░███████"
 )
 
 
