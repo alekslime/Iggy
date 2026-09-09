@@ -67,6 +67,57 @@ MAX_VERIFICATION_CLAIM_RETRY_ATTEMPTS = 2
 # a run non-parseable, existing problems included.
 MAX_SYNTAX_RETRY_ATTEMPTS = 2
 
+# How many times the agent is forced to retry after trying to give a
+# final answer while the request named multiple files and at least one
+# of them hasn't received a successful, verified modification yet
+# (M7.11). Recomputed live at each final-answer attempt rather than
+# tracked as a "pending" flag like M7.6/M7.7/M7.10 -- the underlying
+# signal (which files have actually been modified so far) is cheap to
+# recheck and naturally resolves itself as the agent does more work, so
+# there's no separate failure state to remember between turns.
+MAX_INCOMPLETE_MULTI_TARGET_RETRY_ATTEMPTS = 2
+
+# How many times the agent is forced to retry after modifying a file
+# beyond what an explicitly scope-limited request named (M7.12). Like
+# M7.11, recomputed live rather than tracked as a pending flag.
+MAX_SCOPE_CREEP_RETRY_ATTEMPTS = 2
+
+# Phrases that indicate the user explicitly wants the change confined
+# to specific, named file(s) -- e.g. "only change `app/config.py`,
+# don't touch anything else." M7.12's scope-creep check only fires when
+# one of these is present: touching files beyond what was named is
+# completely normal for many legitimate requests (a bug fix pulling in
+# a related import, an accompanying test update, etc), so without an
+# explicit signal from the user this would false-positive constantly.
+# Requiring an explicit keyword trades recall for precision on
+# purpose -- this is expected to miss plenty of real scope creep that
+# isn't preceded by one of these phrases.
+SCOPE_LIMIT_KEYWORDS = (
+    "only change",
+    "only modify",
+    "only edit",
+    "only touch",
+    "only update",
+    "just change",
+    "just modify",
+    "just edit",
+    "just touch",
+    "only that file",
+    "only this file",
+    "only in that file",
+    "only in this file",
+    "nothing else",
+    "don't touch anything else",
+    "do not touch anything else",
+    "don't modify anything else",
+    "do not modify anything else",
+    "don't touch any other file",
+    "do not touch any other file",
+    "no other files",
+    "minimal change",
+    "smallest possible change",
+)
+
 # Tool calls that plausibly check a modification's result: actually
 # running something, or re-reading/searching the file to look at it
 # again. list_files and git_status don't count -- they don't inspect
@@ -844,6 +895,158 @@ def verify_python_syntax(path: str, post_content: str):
 
 
 # -----------------------------------------------------------------------
+# M7.11 -- incomplete multi-target edit detection
+# -----------------------------------------------------------------------
+#
+# M7.6/M7.7/M7.10 all check the quality of a *single* modification.
+# None of them notice that a request asking for changes across several
+# named files was only partially completed -- e.g. "rename `foo` to
+# `bar` in `app/api.py` and `app/client.py`" but only `app/api.py`
+# actually got touched.
+#
+# Deliberately narrow: this is a slice of "incomplete multi-step," not
+# the whole failure class. It only fires when the request itself names
+# two or more files (reusing M7.7's extract_mentioned_filenames) and at
+# least one of them shows no successful, verified modification by the
+# time a final answer is attempted. Multi-step tasks that aren't
+# anchored to named files (e.g. "add a feature and write tests for
+# it") aren't covered here -- there's no reliable, low-false-positive
+# way to detect that with the same kind of mechanical check the rest
+# of M7.x uses.
+
+
+def check_incomplete_multi_target_edit(
+    last_user_request: str,
+    successfully_modified_paths: set,
+):
+    """Check whether a multi-file request still has an untouched file.
+
+    Returns None if there's nothing to flag: fewer than two files
+    named in the request, or no successful modification has happened
+    at all yet this run (likely a pure information request, or an
+    action request that hasn't started -- both already covered by
+    other mechanisms). Otherwise returns a message listing the files
+    that still need work.
+    """
+
+    mentioned = extract_mentioned_filenames(last_user_request)
+
+    if len(mentioned) < 2:
+        return None
+
+    if not successfully_modified_paths:
+        return None
+
+    modified_basenames = {
+        Path(p).name for p in successfully_modified_paths
+    }
+
+    missing = sorted(
+        m for m in mentioned if Path(m).name not in modified_basenames
+    )
+
+    if not missing:
+        return None
+
+    missing_list = "\n".join(f"  - {m}" for m in missing)
+
+    return (
+        "The request named multiple files, but at least one of them "
+        f"doesn't appear to have been modified yet:\n{missing_list}\n\n"
+        "If the task genuinely requires changes there, make them "
+        "before giving a final answer. If a listed file doesn't "
+        "actually need changes for this task, say so explicitly in "
+        "the answer instead of silently leaving it out."
+    )
+
+
+# -----------------------------------------------------------------------
+# M7.12 -- scope creep detection
+# -----------------------------------------------------------------------
+#
+# The mirror-image failure class to M7.11: instead of leaving a named
+# file untouched, the agent modifies files beyond what was actually
+# requested. This is the fuzziest of the four M7.9-12 checks -- lots of
+# legitimate changes reasonably touch more than one file (a bug fix
+# pulling in a related import, an accompanying test update), so a
+# check that fires on "any extra file touched" would false-positive
+# constantly on a 3B model.
+#
+# To keep precision high, this only fires when the user's own request
+# contains an explicit scope-limiting phrase (SCOPE_LIMIT_KEYWORDS,
+# e.g. "only change `app/config.py`") AND names at least one specific
+# file. Without both signals, this returns None rather than guessing --
+# same philosophy as M7.6's REWRITE_INTENT_KEYWORDS and M7.7's
+# filename-based evidence requirement.
+#
+# Unlike M7.6/M7.7/M7.10, this does not automatically revert the extra
+# file(s): by the time an explicit scope-limit violation is detected,
+# other legitimate edits may have happened in between, and blindly
+# reverting whatever else changed risks destroying real work. Instead
+# this flags the problem and asks the agent to either revert the extra
+# file(s) itself or justify why they were necessary.
+#
+# Practical note: M7.7's wrong-file redirect already reverts most
+# everyday scope creep on its own, independent of scope language --
+# whenever the request names a file that already exists in the
+# project, M7.7 treats *any* edit to a different file as a likely
+# misdirected edit and redirects it back, before this check ever runs.
+# M7.12 mainly adds coverage for the case M7.7 can't: when the named
+# file doesn't exist yet (it's being created this run), M7.7 has no
+# project file to redirect an extra edit to.
+
+
+def check_scope_creep(
+    last_user_request: str,
+    successfully_modified_paths: set,
+):
+    """Check whether a scope-limited request touched files beyond what
+    it named.
+
+    Returns None if the request didn't contain an explicit
+    scope-limiting phrase, didn't name any specific file, or if every
+    successfully modified path matches something the request named.
+    Otherwise returns a message listing the out-of-scope files.
+    """
+
+    if not isinstance(last_user_request, str):
+        return None
+
+    lowered = last_user_request.lower()
+
+    if not any(keyword in lowered for keyword in SCOPE_LIMIT_KEYWORDS):
+        return None
+
+    mentioned = extract_mentioned_filenames(last_user_request)
+
+    if not mentioned:
+        return None
+
+    if not successfully_modified_paths:
+        return None
+
+    allowed_basenames = {Path(m).name for m in mentioned}
+
+    extra = sorted(
+        p for p in successfully_modified_paths
+        if Path(p).name not in allowed_basenames
+    )
+
+    if not extra:
+        return None
+
+    extra_list = "\n".join(f"  - {p}" for p in extra)
+
+    return (
+        "The request asked for the change to be limited to specific "
+        f"file(s), but this run also modified:\n{extra_list}\n\n"
+        "If those changes were genuinely necessary to complete the "
+        "task, explain why in the final answer. Otherwise, revert "
+        "them so only the requested file(s) are changed."
+    )
+
+
+# -----------------------------------------------------------------------
 # M7.8 -- false verification claim detection
 # -----------------------------------------------------------------------
 #
@@ -980,6 +1183,16 @@ def run_agent(messages: list[dict]):
     pending_syntax_recovery = False
     syntax_recovery_attempts = 0
     last_syntax_failure_message = None
+
+    # M7.11/M7.12 shared state: tracks which project-relative paths
+    # have received a modification that passed *every* check this run
+    # (M7.6 semantic, M7.7 target-file, M7.10 syntax) -- i.e. edits
+    # that actually stuck, not ones that got reverted. Both checks are
+    # recomputed live from this set at each final-answer attempt rather
+    # than tracked as separate pending flags.
+    successfully_modified_paths = set()
+    incomplete_multi_target_retry_attempts = 0
+    scope_creep_retry_attempts = 0
 
     # M7.8 recovery state: tracks whether the most recent *successful*
     # modification has gone unverified by any tool call since (no
@@ -1202,6 +1415,74 @@ def run_agent(messages: list[dict]):
                 })
 
                 continue
+
+            if (
+                incomplete_multi_target_retry_attempts
+                < MAX_INCOMPLETE_MULTI_TARGET_RETRY_ATTEMPTS
+            ):
+
+                incomplete_message = check_incomplete_multi_target_edit(
+                    last_user_request,
+                    successfully_modified_paths,
+                )
+
+                if incomplete_message is not None:
+
+                    incomplete_multi_target_retry_attempts += 1
+
+                    print(
+                        "\nRejecting premature final answer: the "
+                        "request named multiple files and at least one "
+                        "hasn't been modified yet (forced retry "
+                        f"{incomplete_multi_target_retry_attempts}/"
+                        f"{MAX_INCOMPLETE_MULTI_TARGET_RETRY_ATTEMPTS})."
+                    )
+
+                    messages.append({
+                        "role": "assistant",
+                        "content": raw_response,
+                    })
+
+                    messages.append({
+                        "role": "user",
+                        "content": incomplete_message,
+                    })
+
+                    continue
+
+            if (
+                scope_creep_retry_attempts
+                < MAX_SCOPE_CREEP_RETRY_ATTEMPTS
+            ):
+
+                scope_creep_message = check_scope_creep(
+                    last_user_request,
+                    successfully_modified_paths,
+                )
+
+                if scope_creep_message is not None:
+
+                    scope_creep_retry_attempts += 1
+
+                    print(
+                        "\nRejecting premature final answer: the "
+                        "request was scope-limited but extra files "
+                        "were modified (forced retry "
+                        f"{scope_creep_retry_attempts}/"
+                        f"{MAX_SCOPE_CREEP_RETRY_ATTEMPTS})."
+                    )
+
+                    messages.append({
+                        "role": "assistant",
+                        "content": raw_response,
+                    })
+
+                    messages.append({
+                        "role": "user",
+                        "content": scope_creep_message,
+                    })
+
+                    continue
 
             answer = action.get("answer", "")
 
@@ -1545,6 +1826,21 @@ def run_agent(messages: list[dict]):
             pending_syntax_recovery = False
             syntax_recovery_attempts = 0
             last_syntax_failure_message = None
+
+        # M7.11/M7.12: a modification only counts as "done" for the
+        # multi-target-completeness and scope-creep checks once it has
+        # cleared every other check above -- a reverted or removed
+        # edit was never actually applied, so it shouldn't count either
+        # towards "this file was handled" or towards "this file was
+        # touched beyond what was asked."
+        if (
+            outcome == "success"
+            and modification_path is not None
+            and semantic_failure_message is None
+            and wrong_file_failure_message is None
+            and syntax_failure_message is None
+        ):
+            successfully_modified_paths.add(modification_path)
 
         messages.append({
             "role": "assistant",
