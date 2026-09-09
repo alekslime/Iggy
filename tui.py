@@ -1,5 +1,8 @@
 """
-Iggy TUI -- a Claude-Code-style terminal interface for the agent.
+Iggy TUI -- a terminal interface for the agent, styled after OpenCode's
+splash-screen look: a blocky wordmark and a centered rounded input up
+front, which hands off to a live feed + diff view once a conversation
+actually starts, with a slim status bar pinned to the bottom throughout.
 
 Design choice (per project discussion): agent.py's run_agent() keeps
 its existing print()-based logging exactly as-is -- no refactor to
@@ -37,12 +40,32 @@ import threading
 from rich.text import Text
 from textual import work
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal
+from textual.binding import Binding
+from textual.containers import Horizontal, Vertical
 from textual.reactive import reactive
-from textual.widgets import Footer, Header, Input, RichLog, Static
+from textual.widgets import Input, RichLog, Static
 
 import agent.agent as agent_module
 import agent.tools as tools_module
+
+
+VERSION = "0.1.0"
+
+# Blocky "IGGY" wordmark, 5x7 dot-matrix-style letterforms. Each logical
+# pixel is rendered as 2 terminal columns wide, to compensate for
+# terminal cells being roughly twice as tall as they are wide -- a 1:1
+# mapping renders squished and unreadable.
+LOGO = "\n".join(
+    [
+        "██████████      ████████      ████████    ██      ██",
+        "    ██        ██            ██            ██      ██",
+        "    ██        ██            ██              ██  ██  ",
+        "    ██        ██  ██████    ██  ██████        ██    ",
+        "    ██        ██      ██    ██      ██        ██    ",
+        "    ██        ██      ██    ██      ██        ██    ",
+        "██████████      ████████      ████████        ██    ",
+    ]
+)
 
 
 # -----------------------------------------------------------------------
@@ -94,6 +117,18 @@ class _PermissionBridge:
         self._app = app
 
     def request(self, action: str) -> bool:
+        # Scout mode is read-only: decline every mutating action
+        # automatically, without ever blocking the worker thread on an
+        # interactive prompt. This is the only place that needs to know
+        # about modes at all -- write_file/replace_in_file/run_command
+        # all already route through request_permission, so nothing in
+        # agent.py or tools.py has to change.
+        if self._app.mode == "scout":
+            self._app.call_from_thread(
+                self._app.note_scouted_action, action
+            )
+            return False
+
         event = threading.Event()
         result = {"approved": False}
 
@@ -130,9 +165,9 @@ STYLE_MAP = {
     "error": "bold red",
     "warning": "bold yellow",
     "success": "bold green",
-    "tool": "bold cyan",
+    "tool": "bold #7dd3fc",
     "dim": "grey50",
-    "default": "white",
+    "default": "#d0d5db",
 }
 
 
@@ -160,18 +195,63 @@ class IggyApp(App):
     """The Iggy TUI."""
 
     CSS = """
+    Screen {
+        background: #0b0e14;
+    }
+
+    /* ---------------- splash ---------------- */
+
+    #splash {
+        height: 1fr;
+        align: center middle;
+    }
+    #logo {
+        width: auto;
+        color: #e8eaed;
+        text-style: bold;
+        content-align: center middle;
+        margin-bottom: 1;
+    }
+    #splash-input {
+        width: 64;
+        border: round #3a4152;
+        background: #10141d;
+        padding: 0 1;
+    }
+    #splash-input:focus {
+        border: round #7dd3fc;
+    }
+    #splash-status {
+        width: 64;
+        content-align: center middle;
+        margin-top: 1;
+    }
+    #splash-hints {
+        width: 64;
+        content-align: center middle;
+        color: #5b6472;
+        margin-top: 1;
+    }
+    .hidden {
+        display: none;
+    }
+
+    /* ---------------- main (feed + diff) ---------------- */
+
     #main {
         height: 1fr;
     }
     #feed {
         width: 3fr;
-        border: solid $accent;
-        border-title-color: $accent;
+        border: solid #3a4152;
+        border-title-color: #7dd3fc;
+        background: #0b0e14;
     }
     #diff-log {
         width: 2fr;
-        border: solid $secondary;
-        border-title-color: $secondary;
+        border: solid #3a4152;
+        border-title-color: #5b6472;
+        background: #0b0e14;
     }
     #prompt-label {
         height: auto;
@@ -180,44 +260,101 @@ class IggyApp(App):
         color: $warning;
         text-style: bold;
     }
-    #chat-input {
+
+    /* ---------------- bottom chrome ---------------- */
+
+    #bottom-bar {
         dock: bottom;
+        height: auto;
+    }
+    #chat-input {
+        border: tall #3a4152;
+    }
+    #chat-input.mode-operate {
+        border: tall #e8a33d;
+    }
+    #chat-input.mode-scout {
+        border: tall #4caf78;
+    }
+    #status-bar {
+        height: 1;
+        background: #10141d;
+        color: #5b6472;
+    }
+    #status-left {
+        width: 1fr;
+        content-align: left middle;
+        padding-left: 1;
+    }
+    #status-right {
+        width: auto;
+        content-align: right middle;
+        padding-right: 1;
     }
     """
 
     BINDINGS = [
         ("ctrl+c", "quit", "Quit"),
+        # priority=True so this wins over the Screen's own shift+tab
+        # binding (focus_previous), which would otherwise shadow it
+        # any time an Input has focus -- i.e. almost always here.
+        Binding("shift+tab", "toggle_mode", "Scout/Operate", priority=True),
     ]
+
+    MODE_LABELS = {
+        "scout": "Scout (read-only)",
+        "operate": "Operate (can write)",
+    }
+    MODE_COLORS = {
+        "scout": "#4caf78",
+        "operate": "#e8a33d",
+    }
 
     turn_running: reactive[bool] = reactive(False)
     awaiting_permission: reactive[bool] = reactive(False)
+    mode: reactive[str] = reactive("operate", init=False)
+    chatting: reactive[bool] = reactive(False, init=False)
 
     def __init__(self) -> None:
         super().__init__()
         self.title = "Iggy"
-        self.sub_title = f"model: {agent_module.MODEL}"
         self.messages = [
             {"role": "system", "content": agent_module.SYSTEM_PROMPT}
         ]
         self._permission_bridge = _PermissionBridge(self)
         self._permission_callback = None
+        self._suppressing_raw_response = False
+        self._project_name = tools_module.get_project_root().name
 
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=True)
-        with Horizontal(id="main"):
+        with Vertical(id="splash"):
+            yield Static(LOGO, id="logo")
+            yield Input(
+                placeholder='Ask anything... e.g. "delete example.txt"',
+                id="splash-input",
+            )
+            yield Static("", id="splash-status")
+            yield Static(
+                "shift+tab scout/operate    ctrl+c quit", id="splash-hints"
+            )
+        with Horizontal(id="main", classes="hidden"):
             yield RichLog(id="feed", wrap=True, highlight=False, markup=False)
             yield RichLog(
                 id="diff-log", wrap=False, highlight=False, markup=False
             )
-        yield Static("", id="prompt-label")
-        yield Input(
-            placeholder="Ask Iggy to do something...", id="chat-input"
-        )
-        yield Footer()
+        with Vertical(id="bottom-bar"):
+            yield Static("", id="prompt-label", classes="hidden")
+            yield Input(
+                placeholder="Ask Iggy to do something...",
+                id="chat-input",
+                classes="hidden",
+            )
+            with Horizontal(id="status-bar"):
+                yield Static("", id="status-left")
+                yield Static("", id="status-right")
 
     def on_mount(self) -> None:
-        self.query_one("#feed", RichLog).border_title = "Live feed"
-        self.query_one("#diff-log", RichLog).border_title = "Last diff"
+        self.query_one("#diff-log", RichLog).border_title = "diff"
 
         # Route agent/tools.py's permission checks through the TUI
         # instead of the raw input() prompt agent.permissions uses by
@@ -225,13 +362,25 @@ class IggyApp(App):
         # like the test suite's own patch.object(tools_module, ...).
         tools_module.request_permission = self._permission_bridge.request
 
+        # mode/chatting are reactive(init=False) so their watchers don't
+        # fire on their own during construction -- apply the initial
+        # styling by hand here, once widgets actually exist to style.
+        self._apply_mode_styling(self.mode)
+        self._apply_status_bar()
+
         self.feed.write(
             Text(
                 "Iggy is ready. Type a message below and press Enter.",
                 style="bold",
             )
         )
-        self.query_one("#chat-input", Input).focus()
+        self.feed.write(
+            Text(
+                "Shift+Tab toggles Scout (read-only) / Operate (can write).",
+                style="grey50",
+            )
+        )
+        self.query_one("#splash-input", Input).focus()
 
     @property
     def feed(self) -> RichLog:
@@ -251,6 +400,9 @@ class IggyApp(App):
 
         if not value or self.turn_running:
             return
+
+        if not self.chatting:
+            self.chatting = True
 
         self.submit_user_message(value)
 
@@ -272,6 +424,83 @@ class IggyApp(App):
 
         if callback is not None:
             callback(approved)
+
+    # -------------------------------------------------------------
+    # splash <-> chat transition
+    # -------------------------------------------------------------
+
+    def watch_chatting(self, chatting: bool) -> None:
+        self.query_one("#splash", Vertical).set_class(chatting, "hidden")
+        self.query_one("#main", Horizontal).set_class(not chatting, "hidden")
+        self.query_one("#prompt-label", Static).set_class(
+            not chatting, "hidden"
+        )
+        chat_input = self.query_one("#chat-input", Input)
+        chat_input.set_class(not chatting, "hidden")
+
+        if chatting:
+            chat_input.focus()
+
+    # -------------------------------------------------------------
+    # mode (Scout / Operate)
+    # -------------------------------------------------------------
+
+    def action_toggle_mode(self) -> None:
+        self.mode = "operate" if self.mode == "scout" else "scout"
+
+    def watch_mode(self, mode: str) -> None:
+        self._apply_mode_styling(mode)
+        self._apply_status_bar()
+
+        if self.chatting:
+            self.feed.write(
+                Text(
+                    f"\n-- switched to {self.MODE_LABELS[mode]} --",
+                    style="bold magenta",
+                )
+            )
+
+    def _apply_mode_styling(self, mode: str) -> None:
+        self.query_one("#feed", RichLog).border_title = "feed"
+
+        chat_input = self.query_one("#chat-input", Input)
+        chat_input.remove_class("mode-scout", "mode-operate")
+        chat_input.add_class(f"mode-{mode}")
+
+        status = self.query_one("#splash-status", Static)
+        status.update(self._status_pills())
+
+    def _status_pills(self) -> Text:
+        pills = Text()
+        pills.append(agent_module.MODEL, style="bold #7dd3fc")
+        pills.append("    ")
+        pills.append(
+            self.MODE_LABELS[self.mode],
+            style=f"bold {self.MODE_COLORS[self.mode]}",
+        )
+        pills.append("    ")
+        pills.append(self._project_name, style="bold #d0d5db")
+        return pills
+
+    def _apply_status_bar(self) -> None:
+        self.query_one("#status-left", Static).update(
+            f"{self._project_name}"
+        )
+        right = Text()
+        right.append(
+            self.MODE_LABELS[self.mode],
+            style=self.MODE_COLORS[self.mode],
+        )
+        right.append(f"   v{VERSION}", style="#5b6472")
+        self.query_one("#status-right", Static).update(right)
+
+    def note_scouted_action(self, action: str) -> None:
+        self.feed.write(
+            Text(
+                f"  (skipped -- Scout mode is read-only: {action})",
+                style="bold yellow",
+            )
+        )
 
     def submit_user_message(self, text: str) -> None:
         self.turn_running = True
@@ -322,9 +551,37 @@ class IggyApp(App):
     # -------------------------------------------------------------
 
     def handle_agent_line(self, line: str) -> None:
+        if self._should_suppress(line):
+            return
+
         style_key = classify_line(line)
         self.feed.write(Text(line, style=STYLE_MAP[style_key]))
         self.maybe_show_diff(line)
+
+    def _should_suppress(self, line: str) -> bool:
+        """Swallow agent.py's `Model raw response:` debug dump.
+
+        That print() emits a header line followed by the model's raw
+        (often JSON) reply, which can span several lines with no
+        internal blank line. We hide the whole block by suppressing
+        everything from the header up to -- but not including -- the
+        next blank line, which is agent.py's own separator before its
+        next print() call.
+        """
+
+        stripped = line.strip()
+
+        if stripped == "Model raw response:":
+            self._suppressing_raw_response = True
+            return True
+
+        if self._suppressing_raw_response:
+            if stripped == "":
+                self._suppressing_raw_response = False
+                return False
+            return True
+
+        return False
 
     # -------------------------------------------------------------
     # diff panel
@@ -388,11 +645,11 @@ class IggyApp(App):
 
         for line in diff_text.splitlines():
             if line.startswith("+") and not line.startswith("+++"):
-                style = "green"
+                style = "#4caf78"
             elif line.startswith("-") and not line.startswith("---"):
-                style = "red"
+                style = "#e06c75"
             elif line.startswith("@@"):
-                style = "cyan"
+                style = "#7dd3fc"
             else:
                 style = "grey50"
 
