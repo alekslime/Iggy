@@ -42,6 +42,44 @@ MAX_SEMANTIC_RETRY_ATTEMPTS = 2
 # perfectly correct, just applied to the wrong target.
 MAX_WRONG_FILE_RETRY_ATTEMPTS = 2
 
+# How many times the agent is forced to retry after claiming, in its
+# final answer, that a change was "verified" / "tested" / "confirmed"
+# without actually calling a tool capable of checking that since the
+# modification (M7.8). This is orthogonal to whether the modification
+# itself was correct -- M7.6/M7.7 already gate that. This catches the
+# agent asserting a verification step happened when it didn't, which
+# the system prompt explicitly forbids ("Never claim that a change was
+# verified unless you actually performed verification").
+MAX_VERIFICATION_CLAIM_RETRY_ATTEMPTS = 2
+
+# Tool calls that plausibly check a modification's result: actually
+# running something, or re-reading/searching the file to look at it
+# again. list_files and git_status don't count -- they don't inspect
+# the change itself.
+VERIFICATION_TOOLS = frozenset({"run_command", "read_file", "search_files"})
+
+# Phrases that indicate the final answer is asserting verification
+# happened. Practical keyword list, not NLP -- like M7.6's rewrite-
+# intent keywords, this accepts known misses (e.g. a negated claim
+# like "I have not verified this") as a documented limitation rather
+# than trying to parse negation.
+VERIFICATION_CLAIM_KEYWORDS = (
+    "verified",
+    "verification passed",
+    "confirmed it works",
+    "confirmed that it works",
+    "confirmed the fix",
+    "tests pass",
+    "test passes",
+    "tests passed",
+    "ran the tests",
+    "ran the test suite",
+    "successfully tested",
+    "tested and it works",
+    "tested and confirmed",
+    "i checked and it works",
+)
+
 # Fraction of a file's original content that must still be recognizable
 # afterwards for a modification to NOT be considered destructive, used
 # by content_preserved_ratio(). Two thresholds: edits with a clearly
@@ -739,6 +777,37 @@ def verify_target_file(path: str, last_user_request: str):
     )
 
 
+# -----------------------------------------------------------------------
+# M7.8 -- false verification claim detection
+# -----------------------------------------------------------------------
+#
+# M7.6 and M7.7 both catch a modification tool actually doing the wrong
+# thing. This catches a different failure: the agent's own final answer
+# asserting a verification step happened ("I verified this works",
+# "tests pass") when no tool call capable of checking that was actually
+# made since the last successful modification. The system prompt
+# already tells the model not to do this; this is the enforcement.
+#
+# Deliberately scoped to the claim, not the underlying behavior: this
+# does not force the agent to actually verify its work, only to not lie
+# about having done so. A retry that rephrases the answer to drop the
+# claim (without verifying anything) satisfies the check just as well
+# as one that runs a real verification step -- which matches the
+# failure class this targets ("false claims"), not "unverified changes
+# are forbidden".
+
+
+def claims_verification(text: str) -> bool:
+    """Check whether a final answer asserts that verification happened."""
+
+    if not isinstance(text, str):
+        return False
+
+    lowered = text.lower()
+
+    return any(keyword in lowered for keyword in VERIFICATION_CLAIM_KEYWORDS)
+
+
 def run_agent(messages: list[dict]):
     """Run the agent until it produces a final answer."""
 
@@ -772,6 +841,14 @@ def run_agent(messages: list[dict]):
     pending_wrong_file_recovery = False
     wrong_file_recovery_attempts = 0
     last_wrong_file_failure_message = None
+
+    # M7.8 recovery state: tracks whether the most recent *successful*
+    # modification has gone unverified by any tool call since (no
+    # run_command / read_file / search_files), so a final answer that
+    # claims verification happened can be caught and forced to either
+    # actually check, or stop claiming it did.
+    unverified_modification_pending = False
+    verification_claim_recovery_attempts = 0
 
     # M7.6: the genuine user request driving this run, captured once up
     # front. Used to infer edit intent (small targeted change vs. full
@@ -948,6 +1025,45 @@ def run_agent(messages: list[dict]):
 
             answer = action.get("answer", "")
 
+            if (
+                unverified_modification_pending
+                and claims_verification(answer)
+                and verification_claim_recovery_attempts
+                < MAX_VERIFICATION_CLAIM_RETRY_ATTEMPTS
+            ):
+
+                verification_claim_recovery_attempts += 1
+
+                print(
+                    "\nRejecting final answer: it claims verification "
+                    "that was never actually performed (forced retry "
+                    f"{verification_claim_recovery_attempts}/"
+                    f"{MAX_VERIFICATION_CLAIM_RETRY_ATTEMPTS})."
+                )
+
+                messages.append({
+                    "role": "assistant",
+                    "content": raw_response,
+                })
+
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        "Your answer claims the change was verified, "
+                        "tested, or confirmed, but no verification step "
+                        "(run_command, read_file, or search_files) has "
+                        "actually been performed since the modification "
+                        "was made.\n\n"
+                        "Either actually verify the change now (e.g. "
+                        "re-read the file, search for the change, or run "
+                        "a relevant command), or give your answer again "
+                        "without claiming a verification step that "
+                        "didn't happen."
+                    ),
+                })
+
+                continue
+
             messages.append({
                 "role": "assistant",
                 "content": raw_response,
@@ -1066,6 +1182,18 @@ def run_agent(messages: list[dict]):
         elif outcome in ("success", "denied"):
             pending_recovery = False
             recovery_attempts = 0
+
+        # M7.8: track whether a successful modification still hasn't
+        # been checked by any tool call since. Independent of whether
+        # M7.6/M7.7 end up flagging this same modification -- those
+        # gate the "none" response on their own, so it doesn't matter
+        # if this stays set through a revert; the model can't reach a
+        # verification-claim check until it gets past those first.
+        if outcome == "success":
+            unverified_modification_pending = True
+            verification_claim_recovery_attempts = 0
+        elif tool_name in VERIFICATION_TOOLS:
+            unverified_modification_pending = False
 
         # M7.6: a tool call can report success while still not having
         # done what was asked (wrote the right text but destroyed the
