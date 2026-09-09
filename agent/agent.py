@@ -1,3 +1,4 @@
+import ast
 import difflib
 import json
 import re
@@ -5,7 +6,13 @@ from pathlib import Path
 
 import ollama
 
-from agent.tools import TOOLS, list_files, read_file, restore_file_content
+from agent.tools import (
+    TOOLS,
+    list_files,
+    read_file,
+    remove_created_file,
+    restore_file_content,
+)
 
 
 MODEL = "qwen2.5-coder:3b"
@@ -51,6 +58,14 @@ MAX_WRONG_FILE_RETRY_ATTEMPTS = 2
 # the system prompt explicitly forbids ("Never claim that a change was
 # verified unless you actually performed verification").
 MAX_VERIFICATION_CLAIM_RETRY_ATTEMPTS = 2
+
+# How many times the agent is forced to retry after a modification or
+# file creation that succeeded, passed semantic and target-file
+# verification, but left a .py file that doesn't parse as valid Python
+# (M7.10). Checked regardless of whether the file already had a syntax
+# error before the edit -- nothing Iggy touches or creates should exit
+# a run non-parseable, existing problems included.
+MAX_SYNTAX_RETRY_ATTEMPTS = 2
 
 # Tool calls that plausibly check a modification's result: actually
 # running something, or re-reading/searching the file to look at it
@@ -778,6 +793,57 @@ def verify_target_file(path: str, last_user_request: str):
 
 
 # -----------------------------------------------------------------------
+# M7.10 -- syntax validation
+# -----------------------------------------------------------------------
+#
+# M7.6/M7.7 both check whether an edit's *content* and *target* match
+# what was requested, but neither one checks whether the result is
+# actually valid code. A modification can pass both of those and still
+# leave a .py file with a dangling paren, bad indentation, or an
+# unclosed string -- a distinct failure class from "wrong content" or
+# "wrong file".
+#
+# Scoped to .py files via ast.parse() -- stdlib, no subprocess, and
+# unambiguous (it either parses or it doesn't), unlike the regex-based
+# heuristics M7.6/M7.7 rely on. Other languages aren't covered: there's
+# no free, dependency-free parser for them here, and guessing at syntax
+# validity without a real parser would be worse than not checking at
+# all.
+#
+# Deliberately checked against every .py file this run touches or
+# creates, not just ones that parsed cleanly before the edit -- the
+# bar is "nothing Iggy leaves behind is broken Python," not "don't make
+# an existing problem worse."
+
+
+def verify_python_syntax(path: str, post_content: str):
+    """Check whether a modified or newly created Python file parses as
+    valid syntax.
+
+    Returns None if the file isn't a .py file, or if it parses cleanly.
+    Returns a human-readable message describing the SyntaxError
+    otherwise.
+    """
+
+    if not isinstance(path, str) or not path.lower().endswith(".py"):
+        return None
+
+    if not isinstance(post_content, str):
+        return None
+
+    try:
+        ast.parse(post_content, filename=path)
+    except SyntaxError as e:
+        return (
+            f"`{path}` does not parse as valid Python after this "
+            f"change: {e.msg} (line {e.lineno}, column {e.offset}).\n\n"
+            "This would leave the project in a broken state."
+        )
+
+    return None
+
+
+# -----------------------------------------------------------------------
 # M7.8 -- false verification claim detection
 # -----------------------------------------------------------------------
 #
@@ -806,6 +872,70 @@ def claims_verification(text: str) -> bool:
     lowered = text.lower()
 
     return any(keyword in lowered for keyword in VERIFICATION_CLAIM_KEYWORDS)
+
+
+# -----------------------------------------------------------------------
+# M7.9 -- unread-file edit guard
+# -----------------------------------------------------------------------
+#
+# The system prompt already says: "Before modifying an existing file,
+# read it first unless its relevant contents are already available."
+# Nothing enforced that. A model can call write_file or replace_in_file
+# on an existing file it has never read or searched this run, working
+# from an assumption about the content instead of the actual content --
+# which is exactly the kind of blind edit M7.6/M7.7 exist to catch
+# after the fact. This catches it before the tool ever runs: unlike
+# M7.6/M7.7/M7.8, whether the model has "seen" a given path is fully
+# knowable in advance, so there's no need for a write-then-revert cycle
+# here -- block it the same way check_unnecessary_full_rewrite() does.
+#
+# "Seen" means either read_file(path) or a search_files() call that
+# returned at least one match in that path -- both actually expose real
+# file content, unlike list_files() or git_status(). A path is also
+# considered seen the moment a modification tool successfully touches
+# it: the model wrote that content itself (write_file), or matched an
+# exact substring of it (replace_in_file), so it isn't blind to a
+# follow-up edit on the same path later in the same run.
+
+
+def check_unread_file_edit(
+    tool_name: str,
+    arguments: dict,
+    files_seen_this_run: set,
+):
+    """Guard run before executing write_file/replace_in_file.
+
+    If the target is an existing file that hasn't been read or searched
+    at all this run, returns a corrective message instead of letting
+    the modification proceed blind. Returns None if the call should
+    proceed as-is (new file, already-seen file, or unusable arguments).
+    """
+
+    if tool_name not in MODIFICATION_TOOLS:
+        return None
+
+    if not isinstance(arguments, dict):
+        return None
+
+    path = arguments.get("path")
+
+    if not isinstance(path, str) or not path.strip():
+        return None
+
+    if path in files_seen_this_run:
+        return None
+
+    if safe_read_file(path) is None:
+        # New file (or unreadable) -- nothing to have read first.
+        return None
+
+    return (
+        f"`{path}` already exists, but it hasn't been read or searched "
+        "yet this run, so this modification would be made blind, "
+        "without knowing the file's actual current content.\n\n"
+        f"Call `read_file` (or `search_files`) on `{path}` first, then "
+        "retry the modification based on what it actually contains."
+    )
 
 
 def run_agent(messages: list[dict]):
@@ -842,6 +972,15 @@ def run_agent(messages: list[dict]):
     wrong_file_recovery_attempts = 0
     last_wrong_file_failure_message = None
 
+    # M7.10 recovery state: tracks whether the most recent modification
+    # or file creation succeeded, passed semantic and target-file
+    # verification, but left a .py file that doesn't parse, and how
+    # many times we've forced a retry instead of letting the agent
+    # claim success with broken syntax.
+    pending_syntax_recovery = False
+    syntax_recovery_attempts = 0
+    last_syntax_failure_message = None
+
     # M7.8 recovery state: tracks whether the most recent *successful*
     # modification has gone unverified by any tool call since (no
     # run_command / read_file / search_files), so a final answer that
@@ -849,6 +988,13 @@ def run_agent(messages: list[dict]):
     # actually check, or stop claiming it did.
     unverified_modification_pending = False
     verification_claim_recovery_attempts = 0
+
+    # M7.9 guard state: tracks which project-relative paths have
+    # actually had their content exposed to the model this run, via
+    # read_file, a matching search_files hit, or a successful
+    # modification. Used to block write_file/replace_in_file calls
+    # against existing files the model hasn't actually looked at.
+    files_seen_this_run = set()
 
     # M7.6: the genuine user request driving this run, captured once up
     # front. Used to infer edit intent (small targeted change vs. full
@@ -1023,6 +1169,40 @@ def run_agent(messages: list[dict]):
 
                 continue
 
+            if (
+                pending_syntax_recovery
+                and syntax_recovery_attempts < MAX_SYNTAX_RETRY_ATTEMPTS
+            ):
+
+                syntax_recovery_attempts += 1
+
+                print(
+                    "\nRejecting premature final answer: the last "
+                    "modification left a file that doesn't parse "
+                    f"(forced retry {syntax_recovery_attempts}/"
+                    f"{MAX_SYNTAX_RETRY_ATTEMPTS})."
+                )
+
+                messages.append({
+                    "role": "assistant",
+                    "content": raw_response,
+                })
+
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        "Your last modification succeeded and passed "
+                        "content and target-file verification, but left "
+                        "the file with invalid syntax, so the task is "
+                        "not complete:\n\n"
+                        f"{last_syntax_failure_message}\n\n"
+                        "Do not tell the user the task is complete. Fix "
+                        "the syntax issue above and retry."
+                    ),
+                })
+
+                continue
+
             answer = action.get("answer", "")
 
             if (
@@ -1115,6 +1295,42 @@ def run_agent(messages: list[dict]):
         print(f"\nTool requested: {tool_name}")
         print(f"Arguments: {arguments}")
 
+        # M7.9: before letting any modification tool touch an existing
+        # file, check whether the model has actually read or searched
+        # that file at all this run. Applies to both write_file and
+        # replace_in_file -- a blind edit is exactly as risky either
+        # way. Checked first, ahead of M7.6's rewrite guard, since
+        # there's no point steering a blind edit towards a "better"
+        # tool before the model has even looked at the file.
+        if tool_name in MODIFICATION_TOOLS:
+
+            unread_file_guard_message = check_unread_file_edit(
+                tool_name,
+                arguments,
+                files_seen_this_run,
+            )
+
+            if unread_file_guard_message is not None:
+
+                print(
+                    "\nBlocking modification: target file hasn't been "
+                    "read or searched yet this run."
+                )
+
+                messages.append({
+                    "role": "assistant",
+                    "content": raw_response,
+                })
+
+                messages.append({
+                    "role": "user",
+                    "content": unread_file_guard_message,
+                })
+
+                tool_calls += 1
+
+                continue
+
         # M7.6: before letting an existing file be fully replaced, check
         # whether the request actually described a small, targeted edit
         # that replace_in_file should handle instead. If so, block the
@@ -1175,6 +1391,28 @@ def run_agent(messages: list[dict]):
         print("\nTool executed:")
         print(result)
 
+        # M7.9: record that this path's real content has now been
+        # exposed to the model this run, so a later modification
+        # against the same path isn't blocked as blind.
+        if tool_name == "read_file" and not (
+            isinstance(result, dict) and "error" in result
+        ):
+
+            read_path = (
+                arguments.get("path") if isinstance(arguments, dict) else None
+            )
+
+            if isinstance(read_path, str) and read_path.strip():
+                files_seen_this_run.add(read_path)
+
+        elif tool_name == "search_files" and isinstance(result, list):
+
+            for match in result:
+                if isinstance(match, dict) and isinstance(
+                    match.get("file"), str
+                ):
+                    files_seen_this_run.add(match["file"])
+
         outcome = classify_modification_result(tool_name, result)
 
         if outcome == "failed":
@@ -1182,6 +1420,14 @@ def run_agent(messages: list[dict]):
         elif outcome in ("success", "denied"):
             pending_recovery = False
             recovery_attempts = 0
+
+        # M7.9: a successful modification also counts as having "seen"
+        # the file -- the model either wrote that content itself
+        # (write_file) or matched an exact substring of it
+        # (replace_in_file) -- so a follow-up edit to the same path
+        # later in this run isn't blocked as blind.
+        if outcome == "success" and modification_path is not None:
+            files_seen_this_run.add(modification_path)
 
         # M7.8: track whether a successful modification still hasn't
         # been checked by any tool call since. Independent of whether
@@ -1208,33 +1454,64 @@ def run_agent(messages: list[dict]):
         # their own recovery messages; a single edit only triggers one.
         semantic_failure_message = None
         wrong_file_failure_message = None
+        syntax_failure_message = None
 
-        if outcome == "success" and pre_content is not None:
+        post_content = (
+            safe_read_file(modification_path)
+            if outcome == "success" and modification_path is not None
+            else None
+        )
 
-            post_content = safe_read_file(modification_path)
+        if pre_content is not None and post_content is not None:
 
-            if post_content is not None:
-                semantic_failure_message = verify_semantic_edit(
+            semantic_failure_message = verify_semantic_edit(
+                path=modification_path,
+                pre_content=pre_content,
+                post_content=post_content,
+                last_user_request=last_user_request,
+            )
+
+            if semantic_failure_message is None:
+                wrong_file_failure_message = verify_target_file(
                     path=modification_path,
-                    pre_content=pre_content,
-                    post_content=post_content,
                     last_user_request=last_user_request,
                 )
 
-                if semantic_failure_message is None:
-                    wrong_file_failure_message = verify_target_file(
-                        path=modification_path,
-                        last_user_request=last_user_request,
-                    )
+        # M7.10: checked whenever a modification/creation succeeded and
+        # nothing above already flagged it -- covers both edits to
+        # existing files (post_content already fetched above) and
+        # brand-new files (pre_content is None, but post_content is
+        # still the file's freshly-written content).
+        if (
+            outcome == "success"
+            and post_content is not None
+            and semantic_failure_message is None
+            and wrong_file_failure_message is None
+        ):
+            syntax_failure_message = verify_python_syntax(
+                modification_path,
+                post_content,
+            )
 
-        if semantic_failure_message is not None or wrong_file_failure_message is not None:
+        if (
+            semantic_failure_message is not None
+            or wrong_file_failure_message is not None
+            or syntax_failure_message is not None
+        ):
 
             try:
-                restore_file_content(modification_path, pre_content)
-                print(
-                    f"\nVerification failed for {modification_path}; "
-                    "reverted to its pre-edit content."
-                )
+                if pre_content is not None:
+                    restore_file_content(modification_path, pre_content)
+                    print(
+                        f"\nVerification failed for {modification_path}; "
+                        "reverted to its pre-edit content."
+                    )
+                else:
+                    remove_created_file(modification_path)
+                    print(
+                        f"\nVerification failed for newly created "
+                        f"{modification_path}; removed it."
+                    )
             except Exception as e:
                 print(
                     f"\nWarning: could not revert {modification_path} "
@@ -1256,6 +1533,18 @@ def run_agent(messages: list[dict]):
             pending_wrong_file_recovery = False
             wrong_file_recovery_attempts = 0
             last_wrong_file_failure_message = None
+
+        if syntax_failure_message is not None:
+            pending_syntax_recovery = True
+            last_syntax_failure_message = syntax_failure_message
+        elif (
+            outcome == "success"
+            and semantic_failure_message is None
+            and wrong_file_failure_message is None
+        ):
+            pending_syntax_recovery = False
+            syntax_recovery_attempts = 0
+            last_syntax_failure_message = None
 
         messages.append({
             "role": "assistant",
@@ -1280,6 +1569,21 @@ def run_agent(messages: list[dict]):
                 "The file has been reverted to its state before this "
                 "change. Do not tell the user the task is complete. Fix "
                 "the issue above and try again."
+            )
+        elif syntax_failure_message is not None:
+            revert_note = (
+                "reverted to its state before this change"
+                if pre_content is not None
+                else "removed, since it was newly created"
+            )
+            followup_content = (
+                f"Tool `{tool_name}` reported success, and content/target "
+                "verification passed, but automatic syntax checking found "
+                f"a problem:\n\n"
+                f"{syntax_failure_message}\n\n"
+                f"The file has been {revert_note}. Do not tell the user "
+                "the task is complete. Fix the syntax issue above and "
+                "try again."
             )
         else:
             followup_content = (

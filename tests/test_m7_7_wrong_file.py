@@ -226,7 +226,10 @@ class M77IntegrationTests(unittest.TestCase):
         scripted = [
             tool_call("read_file", path="app/config.py"),
             # Wrong file -- but the replacement text also exists here,
-            # so the tool call itself succeeds cleanly.
+            # so the tool call itself succeeds cleanly. (Also read
+            # first, so this exercises M7.7's wrong-file detection
+            # specifically, not M7.9's unread-file guard.)
+            tool_call("read_file", path="app/settings.py"),
             tool_call(
                 "replace_in_file",
                 path="app/settings.py",
@@ -257,7 +260,7 @@ class M77IntegrationTests(unittest.TestCase):
         )
 
         # Confirm the forced-retry message actually named the mistake.
-        third_call_messages = chat.calls[2]
+        third_call_messages = chat.calls[3]
         guard_message = third_call_messages[-1]["content"]
         self.assertIn("which file was modified", guard_message)
         self.assertIn("app/config.py", guard_message)
@@ -283,6 +286,7 @@ class M77IntegrationTests(unittest.TestCase):
                 new_text="TIMEOUT = 30",
             ),
             final_answer("Done."),  # rejected, retry 1/2
+            tool_call("read_file", path="app/config.py"),
             tool_call(
                 "replace_in_file",
                 path="app/config.py",

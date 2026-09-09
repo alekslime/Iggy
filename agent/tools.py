@@ -273,6 +273,38 @@ def restore_file_content(path: str, content: str) -> None:
     file_path.write_text(content, encoding="utf-8")
 
 
+def remove_created_file(path: str) -> None:
+    """Delete a file that write_file just created, when a post-creation
+    check (M7.10 syntax validation) determines it should not be kept.
+
+    Used specifically for the "brand-new file" case, where there is no
+    prior content to fall back to via restore_file_content -- undoing
+    the creation entirely is the only sensible revert.
+
+    Deliberately NOT registered in TOOLS, like restore_file_content:
+    the model can never call this directly. It only runs from
+    agent.py's own recovery logic. Silently no-ops if the file is
+    already gone.
+    """
+
+    project_root = get_project_root()
+    file_path = (project_root / path).resolve()
+
+    if not is_safe_path(file_path, project_root):
+        raise PermissionError(
+            "Access denied: file is outside the project directory."
+        )
+
+    if is_backup_path(file_path, project_root):
+        raise PermissionError(
+            "Access denied: cannot modify Iggy's own backup directory "
+            f"({BACKUP_DIR_NAME}/)."
+        )
+
+    if file_path.exists():
+        file_path.unlink()
+
+
 def replace_in_file(
     path: str,
     old_text: str,

@@ -347,6 +347,7 @@ class M76TestCase(unittest.TestCase):
         user_request = "Fix a typo in agent/permissions.py."
 
         scripted = [
+            tool_call("read_file", path="agent/permissions.py"),
             tool_call(
                 "replace_in_file",
                 path="agent/permissions.py",
@@ -371,7 +372,7 @@ class M76TestCase(unittest.TestCase):
             self.current_permissions_content(),
         )
 
-        rejection_messages = chat.calls[2]
+        rejection_messages = chat.calls[3]
         rejection_note = rejection_messages[-1]["content"]
         self.assertIn("recoverable tool failure", rejection_note)
 
@@ -451,6 +452,7 @@ class M76TestCase(unittest.TestCase):
         )
 
         scripted = [
+            tool_call("read_file", path="agent/permissions.py"),
             tool_call(
                 "write_file",
                 path="agent/permissions.py",
@@ -473,7 +475,7 @@ class M76TestCase(unittest.TestCase):
             self.current_permissions_content(),
         )
 
-        guard_messages = chat.calls[1]
+        guard_messages = chat.calls[2]
         self.assertIn("replace_in_file", guard_messages[-1]["content"])
 
     def test_no_false_positive_on_small_file_without_explicit_target(self):
@@ -497,6 +499,7 @@ class M76TestCase(unittest.TestCase):
         # A legitimate edit that happens to change most of a 15-byte
         # file's bytes -- should NOT be treated as destructive.
         scripted = [
+            tool_call("read_file", path="note.txt"),
             tool_call(
                 "write_file",
                 path="note.txt",
@@ -513,7 +516,7 @@ class M76TestCase(unittest.TestCase):
             "Done: fixed already\n",
         )
 
-        followup = chat.calls[1][-1]["content"]
+        followup = chat.calls[2][-1]["content"]
         self.assertNotIn("verification found a problem", followup)
 
     def test_destructive_check_still_applies_above_the_size_gate(self):
