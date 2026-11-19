@@ -28,8 +28,7 @@ terminal app rather than a plain REPL:
     threading.Event, and resumes once the person answers in the prompt
     line at the bottom of the screen.
 
-Run with:  python3 tui.py
-Requires:  pip install textual
+Run with:  iggy tui
 """
 
 import contextlib
@@ -47,9 +46,7 @@ from textual.widgets import Input, RichLog, Static
 
 import agent.agent as agent_module
 import agent.tools as tools_module
-
-
-VERSION = "0.1.0"
+from agent import __version__ as VERSION
 
 LOGO = (
     "░██                                 \n"
@@ -311,9 +308,11 @@ class IggyApp(App):
     mode: reactive[str] = reactive("operate", init=False)
     chatting: reactive[bool] = reactive(False, init=False)
 
-    def __init__(self) -> None:
+    def __init__(self, model=None, max_tool_calls=None) -> None:
         super().__init__()
         self.title = "Iggy"
+        self._model = model or agent_module.MODEL
+        self._max_tool_calls = max_tool_calls
         self.messages = [
             {"role": "system", "content": agent_module.SYSTEM_PROMPT}
         ]
@@ -468,7 +467,7 @@ class IggyApp(App):
 
     def _status_pills(self) -> Text:
         pills = Text()
-        pills.append(agent_module.MODEL, style="bold #7dd3fc")
+        pills.append(self._model, style="bold #7dd3fc")
         pills.append("    ")
         pills.append(
             self.MODE_LABELS[self.mode],
@@ -515,7 +514,11 @@ class IggyApp(App):
 
         try:
             with contextlib.redirect_stdout(bridge):
-                answer = agent_module.run_agent(self.messages)
+                answer = agent_module.run_agent(
+                    self.messages,
+                    model=self._model,
+                    max_tool_calls=self._max_tool_calls,
+                )
         except Exception as e:
             bridge.drain()
             self.call_from_thread(self.on_turn_complete, None, str(e))
@@ -681,5 +684,9 @@ class IggyApp(App):
             input_widget.placeholder = "Ask Iggy to do something..."
 
 
+def main(model=None, max_tool_calls=None) -> None:
+    IggyApp(model=model, max_tool_calls=max_tool_calls).run()
+
+
 if __name__ == "__main__":
-    IggyApp().run()
+    main()
