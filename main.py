@@ -1,5 +1,5 @@
-from agent.agent import main
+from agent.cli import main
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
