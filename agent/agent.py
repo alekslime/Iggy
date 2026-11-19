@@ -1,6 +1,7 @@
 import ast
 import difflib
 import json
+import os
 import re
 from pathlib import Path
 
@@ -15,13 +16,57 @@ from agent.tools import (
 )
 
 
-MODEL = "qwen2.5-coder:3b"
+DEFAULT_MODEL = "qwen2.5-coder:3b"
+DEFAULT_HOST = "http://127.0.0.1:11434"
 MAX_TOOL_CALLS = 10
 
 # Tools whose failure represents an incomplete modification, not just
 # an information-gathering step. Used to detect and recover from
 # failed edits (M7.3).
 MODIFICATION_TOOLS = {"write_file", "replace_in_file"}
+
+
+def resolve_model(cli_value=None) -> str:
+    """Return the model to use: CLI flag wins, then IGGY_MODEL, then
+    the built-in default."""
+
+    if cli_value:
+        return cli_value
+
+    return os.environ.get("IGGY_MODEL") or DEFAULT_MODEL
+
+
+def resolve_host(cli_value=None) -> str:
+    """Return the Ollama host to use: CLI flag wins, then IGGY_HOST /
+    OLLAMA_HOST, then the local default."""
+
+    if cli_value:
+        return cli_value
+
+    return (
+        os.environ.get("IGGY_HOST")
+        or os.environ.get("OLLAMA_HOST")
+        or DEFAULT_HOST
+    )
+
+
+def resolve_max_tool_calls(cli_value=None) -> int:
+    """Return the per-run tool-call limit: CLI flag wins, then
+    IGGY_MAX_TOOLS, then the built-in default. Unparseable values
+    fall back to the default rather than crashing the run."""
+
+    if cli_value is not None:
+        return cli_value
+
+    env_value = os.environ.get("IGGY_MAX_TOOLS")
+
+    if env_value:
+        try:
+            return int(env_value)
+        except ValueError:
+            pass
+
+    return MAX_TOOL_CALLS
 
 # How many times the agent is forced to keep trying after a genuine
 # modification failure before it is allowed to give up. Bounds the
@@ -249,7 +294,11 @@ FILENAME_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-client = ollama.Client(host="http://127.0.0.1:11434")
+# Import-time defaults, honoring the environment. The CLI overrides
+# these per-run (see resolve_* and run_agent's parameters); tests
+# patch `client` wholesale.
+MODEL = resolve_model()
+client = ollama.Client(host=resolve_host())
 
 
 SYSTEM_PROMPT = """
@@ -1141,8 +1190,16 @@ def check_unread_file_edit(
     )
 
 
-def run_agent(messages: list[dict]):
-    """Run the agent until it produces a final answer."""
+def run_agent(messages: list[dict], model=None, max_tool_calls=None):
+    """Run the agent until it produces a final answer.
+
+    model and max_tool_calls override the import-time defaults
+    (MODEL / MAX_TOOL_CALLS) for this run only; the CLI uses this
+    to apply --model / --max-tools without touching globals.
+    """
+
+    model = model or MODEL
+    tool_call_limit = max_tool_calls or MAX_TOOL_CALLS
 
     tool_calls = 0
 
@@ -1221,10 +1278,10 @@ def run_agent(messages: list[dict]):
             last_user_request = message.get("content", "")
             break
 
-    while tool_calls < MAX_TOOL_CALLS:
+    while tool_calls < tool_call_limit:
 
         response = client.chat(
-            model=MODEL,
+            model=model,
             messages=messages,
         )
 
@@ -1899,13 +1956,15 @@ def run_agent(messages: list[dict]):
 
     print(
         f"\nAgent stopped after reaching the "
-        f"{MAX_TOOL_CALLS} tool-call limit."
+        f"{tool_call_limit} tool-call limit."
     )
 
     return None
 
 
-def main():
+def run_repl(model=None, max_tool_calls=None):
+
+    model = model or MODEL
 
     messages = [
         {
@@ -1914,8 +1973,8 @@ def main():
         }
     ]
 
-    print("Local Computer Engineer")
-    print(f"Model: {MODEL}")
+    print("Iggy")
+    print(f"Model: {model}")
     print("----------------------------------------")
     print("Type 'quit' to exit.")
 
@@ -1934,10 +1993,20 @@ def main():
             "content": user_input,
         })
 
-        answer = run_agent(messages)
+        answer = run_agent(
+            messages,
+            model=model,
+            max_tool_calls=max_tool_calls,
+        )
 
         if answer is not None:
             print(f"\nIggy: {answer}")
+
+
+def main():
+    """Legacy entry point (equivalent to `iggy` with defaults)."""
+
+    run_repl()
 
 
 if __name__ == "__main__":
