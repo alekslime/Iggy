@@ -1,5 +1,6 @@
 from datetime import datetime
 from pathlib import Path
+import os
 import shlex
 import subprocess
 
@@ -30,9 +31,20 @@ ALLOWED_COMMANDS = {
 
 
 def get_project_root() -> Path:
-    """Return the root directory of the project."""
+    """Return the root directory of the project.
 
-    return Path(__file__).resolve().parent.parent
+    This is the directory Iggy operates on: the current working
+    directory by default, or IGGY_DIR when set (the `iggy --dir`
+    flag sets it). Everything -- sandboxing, backups, file tools --
+    is anchored here.
+    """
+
+    override = os.environ.get("IGGY_DIR")
+
+    if override:
+        return Path(override).expanduser().resolve()
+
+    return Path.cwd().resolve()
 
 
 def is_safe_path(path: Path, root: Path) -> bool:
