@@ -323,6 +323,113 @@ def remove_created_file(path: str) -> None:
         file_path.unlink()
 
 
+def list_backups(path: str | None = None) -> list[dict]:
+    """List Iggy's timestamped backups, oldest first.
+
+    With a path, lists backups for that file only; otherwise lists
+    every backup in the project. Each entry has the project-relative
+    file "path", the project-relative "backup" file, and the
+    "timestamp" (the backup file's name without its .bak suffix).
+    """
+
+    project_root = get_project_root()
+    backup_root = project_root / BACKUP_DIR_NAME
+
+    if path is not None:
+        if not path.strip():
+            raise ValueError("File path cannot be empty.")
+
+        file_path = (project_root / path).resolve()
+
+        if not is_safe_path(file_path, project_root):
+            raise PermissionError(
+                "Access denied: file is outside the project directory."
+            )
+
+        search_roots = [backup_root / file_path.relative_to(project_root)]
+    else:
+        search_roots = [backup_root]
+
+    if not backup_root.is_dir():
+        return []
+
+    entries = []
+
+    for search_root in search_roots:
+        if not search_root.is_dir():
+            continue
+
+        for backup_path in sorted(search_root.rglob("*.bak")):
+            relative = backup_path.relative_to(backup_root)
+            # Layout is <file path>/<timestamp>.bak, so the parent
+            # chain is the original file's project-relative path.
+            entries.append({
+                "path": str(relative.parent),
+                "backup": str(
+                    backup_path.relative_to(project_root)
+                ),
+                "timestamp": backup_path.stem,
+            })
+
+    entries.sort(key=lambda entry: entry["timestamp"])
+
+    return entries
+
+
+def undo_last_change(path: str | None = None) -> str:
+    """Restore a file from its most recent Iggy backup.
+
+    With a path, restores that file; otherwise restores whichever
+    file was most recently backed up. The current content (if the
+    file still exists) is backed up first, so an undo can itself be
+    undone. Asks for user permission like any other modification.
+
+    Deliberately NOT in MODIFICATION_TOOLS in agent.py: the M7.6
+    semantic check compares results against the request's desired
+    text, which would fight a revert on principle. Undo is
+    permission-gated and backup-preserving instead.
+    """
+
+    backups = list_backups(path)
+
+    if not backups:
+        if path is not None:
+            return f"Nothing to undo: no backups found for {path}."
+        return "Nothing to undo: no backups found in this project."
+
+    latest = backups[-1]
+    target_relpath = latest["path"]
+
+    if not request_permission(f"restore file from backup: {target_relpath}"):
+        return "File modification denied by user."
+
+    project_root = get_project_root()
+    backup_path = project_root / latest["backup"]
+    target_path = (project_root / target_relpath).resolve()
+
+    if not is_safe_path(target_path, project_root):
+        raise PermissionError(
+            "Access denied: file is outside the project directory."
+        )
+
+    if target_path.exists():
+        if not target_path.is_file():
+            raise IsADirectoryError(
+                f"Not a file: {target_relpath}"
+            )
+        pre_undo_backup = backup_file(target_path, project_root)
+        print(f"Backed up current content to: {pre_undo_backup}")
+    else:
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+
+    target_path.write_bytes(backup_path.read_bytes())
+
+    return (
+        f"Restored {target_relpath} from backup "
+        f"{latest['backup']}."
+    )
+
+
 def replace_in_file(
     path: str,
     old_text: str,
@@ -488,4 +595,5 @@ TOOLS = {
     "write_file": write_file,
     "replace_in_file": replace_in_file,
     "delete_file": delete_file,
+    "undo_last_change": undo_last_change,
 }
