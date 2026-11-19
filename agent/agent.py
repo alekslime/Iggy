@@ -23,7 +23,7 @@ MAX_TOOL_CALLS = 10
 # Tools whose failure represents an incomplete modification, not just
 # an information-gathering step. Used to detect and recover from
 # failed edits (M7.3).
-MODIFICATION_TOOLS = {"write_file", "replace_in_file"}
+MODIFICATION_TOOLS = {"write_file", "replace_in_file", "delete_file"}
 
 
 def resolve_model(cli_value=None) -> str:
@@ -369,6 +369,8 @@ TOOL SELECTION:
 - Use replace_in_file when making a targeted change to existing code.
 - Prefer replace_in_file over write_file when modifying an existing file.
 - Use write_file when creating a new file or when replacing an entire file is genuinely necessary.
+- Use delete_file when the user asks to remove a file. Read it first; the content is backed up automatically.
+- Use undo_last_change to revert your own most recent modification when verification shows it was wrong.
 - Use run_command when a command is needed for inspection or verification.
 - Use git_status when the user asks about Git status, modified files, untracked files, staged files, or changes in the working tree.
 
@@ -381,6 +383,8 @@ TOOL DETAILS:
 - run_command(command): runs an approved command inside the project.
 - write_file(path, content): writes or replaces a file inside the project after requesting user permission.
 - replace_in_file(path, old_text, new_text): replaces one exact piece of existing text inside a project file after requesting user permission.
+- delete_file(path): deletes a file inside the project after requesting user permission. The content is backed up first and can be recovered.
+- undo_last_change(path): restores a file from its most recent backup after requesting user permission. Omit path to undo the most recent backup of any file.
 
 SAFETY AND MODIFICATION RULES:
 
@@ -491,9 +495,10 @@ def classify_modification_result(tool_name: str, result) -> str:
     - "not_applicable": this tool call isn't a modification, or its
       result doesn't match a known pattern.
 
-    This only inspects the exact strings write_file/replace_in_file
-    are documented to return, plus the {"error": ...} shape produced
-    when execute_tool raises. It does not guess at other cases.
+    This only inspects the exact strings write_file/replace_in_file/
+    delete_file are documented to return, plus the {"error": ...}
+    shape produced when execute_tool raises. It does not guess at
+    other cases.
     """
 
     if tool_name not in MODIFICATION_TOOLS:
@@ -514,7 +519,13 @@ def classify_modification_result(tool_name: str, result) -> str:
     if result.startswith("File written successfully:"):
         return "success"
 
+    if result.startswith("File deleted successfully:"):
+        return "success"
+
     if result.startswith("Replacement failed:"):
+        return "failed"
+
+    if result.startswith("Delete failed:"):
         return "failed"
 
     return "not_applicable"
@@ -1132,8 +1143,8 @@ def claims_verification(text: str) -> bool:
 #
 # The system prompt already says: "Before modifying an existing file,
 # read it first unless its relevant contents are already available."
-# Nothing enforced that. A model can call write_file or replace_in_file
-# on an existing file it has never read or searched this run, working
+# Nothing enforced that. A model can call a modification tool on an
+# existing file it has never read or searched this run, working
 # from an assumption about the content instead of the actual content --
 # which is exactly the kind of blind edit M7.6/M7.7 exist to catch
 # after the fact. This catches it before the tool ever runs: unlike
@@ -1147,7 +1158,9 @@ def claims_verification(text: str) -> bool:
 # considered seen the moment a modification tool successfully touches
 # it: the model wrote that content itself (write_file), or matched an
 # exact substring of it (replace_in_file), so it isn't blind to a
-# follow-up edit on the same path later in the same run.
+# follow-up edit on the same path later in the same run. (A
+# delete_file success removes the path, so there is no follow-up to
+# unblock -- but the guard still applies to the deletion itself.)
 
 
 def check_unread_file_edit(
@@ -1155,7 +1168,7 @@ def check_unread_file_edit(
     arguments: dict,
     files_seen_this_run: set,
 ):
-    """Guard run before executing write_file/replace_in_file.
+    """Guard run before executing a modification tool.
 
     If the target is an existing file that hasn't been read or searched
     at all this run, returns a corrective message instead of letting
@@ -1635,11 +1648,12 @@ def run_agent(messages: list[dict], model=None, max_tool_calls=None):
 
         # M7.9: before letting any modification tool touch an existing
         # file, check whether the model has actually read or searched
-        # that file at all this run. Applies to both write_file and
-        # replace_in_file -- a blind edit is exactly as risky either
-        # way. Checked first, ahead of M7.6's rewrite guard, since
-        # there's no point steering a blind edit towards a "better"
-        # tool before the model has even looked at the file.
+        # that file at all this run. Applies to write_file,
+        # replace_in_file, and delete_file alike -- a blind change is
+        # exactly as risky whichever tool makes it. Checked first,
+        # ahead of M7.6's rewrite guard, since there's no point
+        # steering a blind edit towards a "better" tool before the
+        # model has even looked at the file.
         if tool_name in MODIFICATION_TOOLS:
 
             unread_file_guard_message = check_unread_file_edit(
