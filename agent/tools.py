@@ -396,6 +396,51 @@ def replace_in_file(
     return f"Replacement applied successfully: {path}"
 
 
+def delete_file(path: str) -> str:
+    """Delete a file inside the project after requesting permission.
+
+    The file's content is backed up first (see backup_file), so a
+    deletion can be recovered with undo_last_change.
+    """
+
+    if not path.strip():
+        raise ValueError("File path cannot be empty.")
+
+    project_root = get_project_root()
+    file_path = (project_root / path).resolve()
+
+    if not is_safe_path(file_path, project_root):
+        raise PermissionError(
+            "Access denied: file is outside the project directory."
+        )
+
+    if is_backup_path(file_path, project_root):
+        raise PermissionError(
+            "Access denied: cannot modify Iggy's own backup directory "
+            f"({BACKUP_DIR_NAME}/)."
+        )
+
+    if not file_path.exists():
+        raise FileNotFoundError(
+            f"File does not exist: {path}"
+        )
+
+    if not file_path.is_file():
+        raise IsADirectoryError(
+            f"Not a file: {path}"
+        )
+
+    if not request_permission(f"delete file: {path}"):
+        return "File modification denied by user."
+
+    backup_path = backup_file(file_path, project_root)
+    print(f"Backed up existing file to: {backup_path}")
+
+    file_path.unlink()
+
+    return f"File deleted successfully: {path}"
+
+
 def search_files(query: str) -> list[dict]:
     """Search for text inside project files."""
 
@@ -442,4 +487,5 @@ TOOLS = {
     "run_command": run_command,
     "write_file": write_file,
     "replace_in_file": replace_in_file,
+    "delete_file": delete_file,
 }
