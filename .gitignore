@@ -3,6 +3,9 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .iggy_backups/
+*.egg-info/
+build/
+dist/
 .env
 .vscode/
 .idea/
