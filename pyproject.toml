@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "iggy"
+version = "0.1.0"
+description = "A local-first CLI AI programming tool (Ollama-powered coding agent)"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "ollama>=0.6",
+    "textual>=8.2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=9.2"]
+
+[project.scripts]
+iggy = "agent.cli:main"
+
+[tool.setuptools]
+packages = ["agent"]
