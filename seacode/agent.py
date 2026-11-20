@@ -26,45 +26,91 @@ MAX_TOOL_CALLS = 10
 MODIFICATION_TOOLS = {"write_file", "replace_in_file", "delete_file"}
 
 
-def resolve_model(cli_value=None) -> str:
+def config_value(config, key):
+    """Read one key from a loaded seacode.toml dict (None-safe)."""
+
+    if not isinstance(config, dict):
+        return None
+
+    return config.get(key)
+
+
+def resolve_model(cli_value=None, config=None) -> str:
     """Return the model to use: CLI flag wins, then SEACODE_MODEL, then
-    the built-in default."""
+    seacode.toml, then the built-in default."""
 
     if cli_value:
         return cli_value
 
-    return os.environ.get("SEACODE_MODEL") or DEFAULT_MODEL
+    env_value = os.environ.get("SEACODE_MODEL")
+
+    if env_value:
+        return env_value
+
+    config_value_model = config_value(config, "model")
+
+    if config_value_model:
+        return config_value_model
+
+    return DEFAULT_MODEL
 
 
-def resolve_host(cli_value=None) -> str:
+def resolve_host(cli_value=None, config=None) -> str:
     """Return the Ollama host to use: CLI flag wins, then SEACODE_HOST /
-    OLLAMA_HOST, then the local default."""
+    OLLAMA_HOST, then seacode.toml, then the local default."""
 
     if cli_value:
         return cli_value
 
-    return (
-        os.environ.get("SEACODE_HOST")
-        or os.environ.get("OLLAMA_HOST")
-        or DEFAULT_HOST
-    )
+    env_value = os.environ.get("SEACODE_HOST") or os.environ.get("OLLAMA_HOST")
+
+    if env_value:
+        return env_value
+
+    config_host = config_value(config, "host")
+
+    if config_host:
+        return config_host
+
+    return DEFAULT_HOST
 
 
-def resolve_max_tool_calls(cli_value=None) -> int:
+def coerce_max_tool_calls(value):
+    """Best-effort int for a limit from env/config; None if unusable."""
+
+    if isinstance(value, bool):
+        return None
+
+    if isinstance(value, int):
+        return value
+
+    if isinstance(value, str) and value.strip():
+        try:
+            return int(value)
+        except ValueError:
+            return None
+
+    return None
+
+
+def resolve_max_tool_calls(cli_value=None, config=None) -> int:
     """Return the per-run tool-call limit: CLI flag wins, then
-    SEACODE_MAX_TOOLS, then the built-in default. Unparseable values
-    fall back to the default rather than crashing the run."""
+    SEACODE_MAX_TOOLS, then seacode.toml, then the built-in default.
+    Unparseable values fall back to the next source rather than
+    crashing the run."""
 
     if cli_value is not None:
         return cli_value
 
-    env_value = os.environ.get("SEACODE_MAX_TOOLS")
+    from_env = coerce_max_tool_calls(os.environ.get("SEACODE_MAX_TOOLS"))
 
-    if env_value:
-        try:
-            return int(env_value)
-        except ValueError:
-            pass
+    if from_env is not None:
+        return from_env
+
+    from_config = coerce_max_tool_calls(config_value(config, "max_tools"))
+
+    if from_config is not None:
+        return from_config
 
     return MAX_TOOL_CALLS
 

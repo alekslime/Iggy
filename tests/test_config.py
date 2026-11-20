@@ -130,6 +130,100 @@ class ResolveConfigTests(unittest.TestCase):
             )
 
 
+class ResolveWithConfigTests(unittest.TestCase):
+
+    def setUp(self):
+        patcher = patch.dict(os.environ)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        os.environ.pop("SEACODE_MODEL", None)
+        os.environ.pop("SEACODE_HOST", None)
+        os.environ.pop("OLLAMA_HOST", None)
+        os.environ.pop("SEACODE_MAX_TOOLS", None)
+
+    def test_config_values_used(self):
+        config = {
+            "model": "config-model",
+            "host": "http://config:11434",
+            "max_tools": 25,
+        }
+
+        self.assertEqual(
+            seacode_module.resolve_model(None, config), "config-model"
+        )
+        self.assertEqual(
+            seacode_module.resolve_host(None, config),
+            "http://config:11434",
+        )
+        self.assertEqual(
+            seacode_module.resolve_max_tool_calls(None, config), 25
+        )
+
+    def test_env_beats_config(self):
+        config = {
+            "model": "config-model",
+            "host": "http://config:11434",
+            "max_tools": 25,
+        }
+
+        with patch.dict(
+            os.environ,
+            {
+                "SEACODE_MODEL": "env-model",
+                "SEACODE_HOST": "http://env:11434",
+                "SEACODE_MAX_TOOLS": "7",
+            },
+        ):
+            self.assertEqual(
+                seacode_module.resolve_model(None, config), "env-model"
+            )
+            self.assertEqual(
+                seacode_module.resolve_host(None, config),
+                "http://env:11434",
+            )
+            self.assertEqual(
+                seacode_module.resolve_max_tool_calls(None, config), 7
+            )
+
+    def test_cli_beats_env_and_config(self):
+        config = {"model": "config-model", "max_tools": 25}
+
+        with patch.dict(
+            os.environ,
+            {"SEACODE_MODEL": "env-model", "SEACODE_MAX_TOOLS": "7"},
+        ):
+            self.assertEqual(
+                seacode_module.resolve_model("cli-model", config),
+                "cli-model",
+            )
+            self.assertEqual(
+                seacode_module.resolve_max_tool_calls(3, config), 3
+            )
+
+    def test_unparseable_env_falls_through_to_config(self):
+        with patch.dict(os.environ, {"SEACODE_MAX_TOOLS": "lots"}):
+            self.assertEqual(
+                seacode_module.resolve_max_tool_calls(
+                    None, {"max_tools": 9}
+                ),
+                9,
+            )
+
+    def test_unparseable_config_falls_back_to_default(self):
+        self.assertEqual(
+            seacode_module.resolve_max_tool_calls(
+                None, {"max_tools": "lots"}
+            ),
+            seacode_module.MAX_TOOL_CALLS,
+        )
+        self.assertEqual(
+            seacode_module.resolve_max_tool_calls(
+                None, {"max_tools": True}
+            ),
+            seacode_module.MAX_TOOL_CALLS,
+        )
+
+
 class ProjectRootTests(unittest.TestCase):
 
     def test_seacode_dir_override(self):
