@@ -36,6 +36,8 @@ seacode tui                # full-screen terminal UI
 seacode undo               # restore the most recently backed-up file
 seacode undo notes.txt     # restore one file's most recent backup
 seacode undo --list        # list available backups
+seacode sessions           # list saved conversation sessions
+seacode init               # write a starter seacode.toml in the project
 seacode --version
 ```
 
@@ -46,7 +48,45 @@ Options (REPL and TUI):
 | `--model` | `SEACODE_MODEL` | `qwen2.5-coder:3b` | Ollama model |
 | `--host` | `SEACODE_HOST` / `OLLAMA_HOST` | `http://127.0.0.1:11434` | Ollama server |
 | `--max-tools` | `SEACODE_MAX_TOOLS` | `10` | tool calls allowed per turn |
+| `--trust` | `SEACODE_TRUST` | `ask` | `ask`, `edits`, or `all` |
+| `--yes` | — | off | shorthand for `--trust all` |
+| `--resume [ID]` | — | off | resume latest (or matching) session |
+| `--no-stream` | — | off | wait for full replies |
 | `--dir` | `SEACODE_DIR` | current directory | project to work on |
+
+Every option also has an `seacode.toml` key (see below); precedence is
+flag > env > config file > default.
+
+## Project config
+
+`seacode init` writes a starter `seacode.toml` in the project root:
+
+```toml
+[seacode]
+model = "qwen2.5-coder:3b"
+host = "http://127.0.0.1:11434"
+max_tools = 10
+trust = "ask"          # ask | edits | all
+extra_commands = []    # appended to the run_command allowlist
+```
+
+All keys are optional.
+
+## Trust levels
+
+- `ask` — prompt for every file change and command (default).
+- `edits` — auto-approve file changes, still prompt for commands.
+- `all` — auto-approve everything (same as `--yes`).
+
+Auto-approvals are always printed. In the TUI, Scout mode still
+denies every modification regardless of trust.
+
+## Sessions
+
+Conversations autosave per turn under `.seacode_sessions/` (local-only,
+never committed). Resume with `seacode repl --resume` (latest) or
+`seacode repl --resume <id-prefix>`; the TUI takes the same flag. A
+resumed session keeps its model unless `--model` overrides it.
 
 ## How it works
 
@@ -64,7 +104,7 @@ Tools:
 - `undo_last_change` — restores a file from its most recent backup
   (the agent itself can use this to revert a bad edit)
 
-Guardrails (the M7 series in `seacode/seacode.py`): failed edits force a
+Guardrails (the M7 series in `seacode/agent.py`): failed edits force a
 retry instead of quitting; malformed model output is corrected;
 edits that destroy file content, land on the wrong file, leave
 invalid Python, miss a named file, or exceed an explicit scope are
@@ -72,20 +112,29 @@ reverted with an explanation; blind edits of unread files are
 blocked; and final answers may not claim verification that never
 happened.
 
-The TUI (`seacode tui`) opens on a splash screen with a centered prompt
-and model/mode/project pills, then switches to a live feed plus diff
-pane once you start chatting. `Shift+Tab` toggles Scout (read-only:
-every modification is auto-denied) and Operate mode.
+Model replies stream token by token as they arrive
+(`--no-stream` restores the old wait-for-full-reply behavior).
+
+The TUI (`seacode tui`) opens on a splash screen with a centered prompt,
+model/mode/project pills, recent sessions (type a number to resume
+one), project stats, and a tip. Once you start chatting it becomes a
+single-column transcript where each file change shows its diff inline
+with a one-command revert hint. `Shift+Tab` toggles Scout (read-only:
+every modification is auto-denied) and Operate mode. Slash commands
+work from either screen: `/help`, `/undo`, `/sessions`, `/model`,
+`/scout`, `/operate`, `/clear`.
 
 ## Project layout
 
 ```text
-seacode/seacode.py    # the tool loop, system prompt, M7 guardrails
-seacode/tools.py    # tool implementations, sandboxing, backups
-seacode/permissions.py  # y/N approval prompt
-seacode/cli.py      # `seacode` entry point (repl, tui, undo)
-seacode/tui.py      # Textual interface
-tests/            # mocked suites (no Ollama server needed)
+seacode/agent.py       # the tool loop, system prompt, M7 guardrails
+seacode/tools.py       # tool implementations, sandboxing, backups
+seacode/permissions.py # approval prompts and trust levels
+seacode/sessions.py    # conversation save/resume
+seacode/config.py      # seacode.toml loading
+seacode/cli.py         # `seacode` entry point
+seacode/tui.py         # Textual interface
+tests/               # mocked suites (no Ollama server needed)
 ```
 
 ## Development
