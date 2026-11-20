@@ -5,6 +5,7 @@ import shlex
 import subprocess
 
 from seacode.permissions import request_permission
+from seacode.sessions import SESSIONS_DIR_NAME
 
 
 BACKUP_DIR_NAME = ".seacode_backups"
@@ -18,6 +19,7 @@ IGNORED_DIRECTORIES = {
     ".ruff_cache",
     "node_modules",
     BACKUP_DIR_NAME,
+    SESSIONS_DIR_NAME,
 }
 
 ALLOWED_COMMANDS = {
@@ -34,6 +36,51 @@ ALLOWED_COMMANDS = {
     "pytest",
     "git",
 }
+
+# Extra command names from the project's seacode.toml, set once at
+# startup via set_extra_commands(). Empty unless configured.
+_extra_commands = frozenset()
+
+
+def set_extra_commands(commands) -> None:
+    """Extend the run_command allowlist for this process.
+
+    Each entry must be a bare command name (no whitespace, no path
+    separators); anything else raises ValueError so a typo'd config
+    fails fast at startup instead of silently doing nothing.
+    """
+
+    global _extra_commands
+
+    if commands is None:
+        commands = []
+
+    validated = set()
+
+    for command in commands:
+        if (
+            not isinstance(command, str)
+            or not command.strip()
+            or any(char.isspace() for char in command)
+            or "/" in command
+        ):
+            raise ValueError(
+                f"Invalid extra command: {command!r} "
+                "(expected a bare command name)"
+            )
+        validated.add(command)
+
+    _extra_commands = frozenset(validated)
+
+
+def is_command_allowed(command_name: str) -> bool:
+    """Check a bare command name against the built-in allowlist plus
+    any configured extras."""
+
+    return (
+        command_name in ALLOWED_COMMANDS
+        or command_name in _extra_commands
+    )
 
 
 def get_project_root() -> Path:
@@ -97,7 +144,7 @@ def run_command(command: str) -> str:
 
     command_name = args[0]
 
-    if command_name not in ALLOWED_COMMANDS:
+    if not is_command_allowed(command_name):
         raise PermissionError(
             f"Command not allowed: {command_name}"
         )

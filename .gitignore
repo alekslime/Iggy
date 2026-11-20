@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .seacode_backups/
+.seacode_sessions/
 *.egg-info/
 build/
 dist/
