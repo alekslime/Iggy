@@ -4,11 +4,14 @@ Commands:
   seacode              start the chat REPL (default)
   seacode tui          start the full-screen terminal UI
   seacode undo         restore a file from its most recent backup
+  seacode sessions     list saved conversation sessions
+  seacode init         write a starter seacode.toml in the project
 
-Global options (--model, --host, --max-tools, --dir) apply to the
-REPL and the TUI; `undo` only needs --dir. Each also has an
-environment-variable equivalent (SEACODE_MODEL, SEACODE_HOST,
-SEACODE_MAX_TOOLS, SEACODE_DIR); the flag wins when both are given.
+Global options (--model, --host, --max-tools, --trust, --dir) apply
+to the REPL and the TUI; `undo`/`sessions` only need --dir. Each
+also has an environment-variable equivalent (SEACODE_MODEL, SEACODE_HOST,
+SEACODE_MAX_TOOLS, SEACODE_TRUST, SEACODE_DIR) and an seacode.toml key; the flag
+wins, then env, then config file, then the default.
 """
 
 import argparse
@@ -19,7 +22,91 @@ import ollama
 
 import seacode.agent as seacode_module
 from seacode import __version__
-from seacode.tools import get_project_root, list_backups, undo_last_change
+from seacode import permissions as permissions_module
+from seacode.config import load_project_config, write_default_config
+from seacode.sessions import list_sessions, load_session, turns_label
+from seacode.tools import (
+    get_project_root,
+    list_backups,
+    set_extra_commands,
+    undo_last_change,
+)
+
+
+def add_common_arguments(parser):
+    parser.add_argument(
+        "--model",
+        default=None,
+        help=(
+            f"Ollama model to use (default: $SEACODE_MODEL, seacode.toml, "
+            f"or '{seacode_module.DEFAULT_MODEL}')"
+        ),
+    )
+    parser.add_argument(
+        "--host",
+        default=None,
+        help=(
+            "Ollama host (default: $SEACODE_HOST, $OLLAMA_HOST, "
+            f"seacode.toml, or '{seacode_module.DEFAULT_HOST}')"
+        ),
+    )
+    parser.add_argument(
+        "--max-tools",
+        type=int,
+        default=None,
+        help=(
+            "Max tool calls per agent turn (default: $SEACODE_MAX_TOOLS, "
+            f"seacode.toml, or {seacode_module.MAX_TOOL_CALLS})"
+        ),
+    )
+    parser.add_argument(
+        "--trust",
+        choices=permissions_module.TRUST_LEVELS,
+        default=None,
+        help=(
+            "Permission policy: ask everything (default), auto-approve "
+            "file edits, or auto-approve all ($SEACODE_TRUST, seacode.toml)"
+        ),
+    )
+    parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="Shorthand for --trust all.",
+    )
+    parser.add_argument(
+        "--dir",
+        default=None,
+        help=(
+            "Project directory to operate on "
+            "(default: $SEACODE_DIR or the current directory)"
+        ),
+    )
+    parser.add_argument(
+        "--resume",
+        nargs="?",
+        const="latest",
+        default=None,
+        metavar="SESSION",
+        help=(
+            "Resume a saved session: the latest, or the one matching "
+            "this id prefix."
+        ),
+    )
+    parser.add_argument(
+        "--no-stream",
+        action="store_true",
+        help="Wait for full replies instead of streaming tokens.",
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Dump each raw model response (debugging).",
+    )
+    parser.add_argument(
+        "--no-anim",
+        action="store_true",
+        help="Disable splash screen animation.",
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -34,39 +121,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     common = argparse.ArgumentParser(add_help=False)
-    common.add_argument(
-        "--model",
-        default=None,
-        help=(
-            f"Ollama model to use (default: $SEACODE_MODEL or "
-            f"'{seacode_module.DEFAULT_MODEL}')"
-        ),
-    )
-    common.add_argument(
-        "--host",
-        default=None,
-        help=(
-            "Ollama host (default: $SEACODE_HOST, $OLLAMA_HOST, or "
-            f"'{seacode_module.DEFAULT_HOST}')"
-        ),
-    )
-    common.add_argument(
-        "--max-tools",
-        type=int,
-        default=None,
-        help=(
-            "Max tool calls per agent turn (default: $SEACODE_MAX_TOOLS "
-            f"or {seacode_module.MAX_TOOL_CALLS})"
-        ),
-    )
-    common.add_argument(
-        "--dir",
-        default=None,
-        help=(
-            "Project directory to operate on "
-            "(default: $SEACODE_DIR or the current directory)"
-        ),
-    )
+    add_common_arguments(common)
 
     subparsers = parser.add_subparsers(dest="command")
 
@@ -112,55 +167,213 @@ def build_parser() -> argparse.ArgumentParser:
     )
     undo.set_defaults(func=run_undo)
 
+    sessions = subparsers.add_parser(
+        "sessions",
+        help="List saved conversation sessions.",
+    )
+    sessions.add_argument(
+        "--dir",
+        default=None,
+        help=(
+            "Project directory to operate on "
+            "(default: $SEACODE_DIR or the current directory)"
+        ),
+    )
+    sessions.set_defaults(func=run_sessions)
+
+    init = subparsers.add_parser(
+        "init",
+        help="Write a starter seacode.toml in the project.",
+    )
+    init.add_argument(
+        "--dir",
+        default=None,
+        help=(
+            "Project directory to operate on "
+            "(default: $SEACODE_DIR or the current directory)"
+        ),
+    )
+    init.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite an existing seacode.toml.",
+    )
+    init.set_defaults(func=run_init)
+
     # Bare `seacode` behaves like `seacode repl`, accepting the same flags.
     # argparse can't attach one shared-flag group to two parser levels
     # at once, so the top-level parser carries its own hidden copies
     # for that case.
-    parser.add_argument("--model", default=None, help=argparse.SUPPRESS)
-    parser.add_argument("--host", default=None, help=argparse.SUPPRESS)
-    parser.add_argument(
-        "--max-tools", type=int, default=None, help=argparse.SUPPRESS
-    )
-    parser.add_argument("--dir", default=None, help=argparse.SUPPRESS)
+    hidden = argparse.ArgumentParser(add_help=False)
+    add_common_arguments(hidden)
+
+    for action in hidden._actions:
+        if action.dest == "help":
+            continue
+        kwargs = {
+            "default": action.default,
+            "help": argparse.SUPPRESS,
+        }
+        if action.const is not None or action.nargs is not None:
+            kwargs["nargs"] = action.nargs
+            kwargs["const"] = action.const
+            kwargs["metavar"] = action.metavar
+        if isinstance(action, argparse._StoreTrueAction):
+            parser.add_argument(
+                *action.option_strings,
+                action="store_true",
+                help=argparse.SUPPRESS,
+            )
+        elif action.type is not None:
+            parser.add_argument(
+                *action.option_strings,
+                type=action.type,
+                **kwargs,
+            )
+        elif action.choices is not None:
+            parser.add_argument(
+                *action.option_strings,
+                choices=action.choices,
+                **kwargs,
+            )
+        else:
+            parser.add_argument(*action.option_strings, **kwargs)
+
     parser.set_defaults(func=run_repl)
 
     return parser
 
 
 def apply_common_options(args) -> tuple:
-    """Apply --dir/--host and resolve --model/--max-tools.
+    """Apply startup options; return (model, max_tools, config, stream,
+    verbose).
 
-    Returns (model, max_tool_calls). --dir is exported as SEACODE_DIR
-    so the tools pick it up; --host rebuilds the Ollama client.
+    Applies --dir first (everything else is relative to the project),
+    loads seacode.toml, then resolves --model/--host/--max-tools and
+    applies --trust/--yes plus the config's extra commands. Raises
+    ValueError on invalid trust levels or command names so a bad
+    config fails fast instead of mid-run.
     """
 
     if getattr(args, "dir", None):
         os.environ["SEACODE_DIR"] = args.dir
 
-    if getattr(args, "host", None):
-        seacode_module.client = ollama.Client(
-            host=seacode_module.resolve_host(args.host)
-        )
+    root = get_project_root()
+    config = load_project_config(root)
 
-    model = seacode_module.resolve_model(getattr(args, "model", None))
-    max_tool_calls = seacode_module.resolve_max_tool_calls(
-        getattr(args, "max_tools", None)
+    if getattr(args, "yes", False):
+        permissions_module.set_trust_level("all")
+    elif getattr(args, "trust", None):
+        permissions_module.set_trust_level(args.trust)
+
+    # Pin the effective level (flag > env > seacode.toml > ask) so every
+    # permission prompt during the run sees it, and fail fast on a
+    # bad SEACODE_TRUST / seacode.toml value.
+    permissions_module.set_trust_level(
+        permissions_module.get_trust_level(config)
     )
 
-    return model, max_tool_calls
+    set_extra_commands(config.get("extra_commands"))
+
+    if getattr(args, "host", None):
+        seacode_module.client = ollama.Client(
+            host=seacode_module.resolve_host(args.host, config)
+        )
+
+    model = seacode_module.resolve_model(
+        getattr(args, "model", None), config
+    )
+    max_tool_calls = seacode_module.resolve_max_tool_calls(
+        getattr(args, "max_tools", None), config
+    )
+    stream = not getattr(args, "no_stream", False)
+    verbose = getattr(args, "verbose", False)
+
+    return model, max_tool_calls, config, stream, verbose
+
+
+def load_resume_session(args):
+    """Load the session --resume names, or None if not asked.
+
+    Returns the session dict. Exits non-zero with a message when the
+    request can't be satisfied.
+    """
+
+    if getattr(args, "resume", None) is None:
+        return None
+
+    try:
+        session = load_session(get_project_root(), args.resume)
+    except (FileNotFoundError, ValueError) as e:
+        print(f"Cannot resume session: {e}")
+        raise SystemExit(1)
+
+    print(f"Resumed session {session['id']} "
+          f"({len(session['messages'])} messages).")
+
+    return session
 
 
 def run_repl(args) -> int:
-    model, max_tool_calls = apply_common_options(args)
-    seacode_module.run_repl(model=model, max_tool_calls=max_tool_calls)
+    model, max_tool_calls, config, stream, verbose = (
+        apply_common_options(args)
+    )
+    session = load_resume_session(args)
+
+    session_id = None
+    messages = None
+    initial_turns = 0
+
+    if session is not None:
+        session_id = session["id"]
+        messages = session["messages"]
+        initial_turns = session.get("turns", 0)
+
+        # A resumed session remembers its own model unless --model
+        # (or SEACODE_MODEL) explicitly overrides it for this run.
+        if (
+            session.get("model")
+            and getattr(args, "model", None) is None
+            and os.environ.get("SEACODE_MODEL") is None
+        ):
+            model = session["model"]
+
+    seacode_module.run_repl(
+        model=model,
+        max_tool_calls=max_tool_calls,
+        stream=stream,
+        initial_messages=messages,
+        session_id=session_id,
+        initial_turns=initial_turns,
+        verbose=verbose,
+    )
     return 0
 
 
 def run_tui(args) -> int:
     from seacode.tui import SeaCodeApp
 
-    model, max_tool_calls = apply_common_options(args)
-    SeaCodeApp(model=model, max_tool_calls=max_tool_calls).run()
+    model, max_tool_calls, config, stream, _ = apply_common_options(args)
+    session = load_resume_session(args)
+
+    session_id = None
+    messages = None
+    initial_turns = 0
+
+    if session is not None:
+        session_id = session["id"]
+        messages = session["messages"]
+        initial_turns = session.get("turns", 0)
+
+    SeaCodeApp(
+        model=model,
+        max_tool_calls=max_tool_calls,
+        stream=stream,
+        initial_messages=messages,
+        session_id=session_id,
+        initial_turns=initial_turns,
+        animate=not getattr(args, "no_anim", False),
+    ).run()
     return 0
 
 
@@ -183,6 +396,42 @@ def run_undo(args) -> int:
         return 0
 
     print(undo_last_change(args.path))
+    return 0
+
+
+def run_sessions(args) -> int:
+    if args.dir:
+        os.environ["SEACODE_DIR"] = args.dir
+
+    entries = list_sessions(get_project_root())
+
+    if not entries:
+        print("No saved sessions.")
+        return 0
+
+    print(f"Sessions in {get_project_root()} (newest first):")
+
+    for entry in entries:
+        print(f"  {entry['id']}  "
+              f"{turns_label(entry['turns'])}  "
+              f"{entry['model']}")
+        if entry["preview"]:
+            print(f"    {entry['preview']}")
+
+    return 0
+
+
+def run_init(args) -> int:
+    if args.dir:
+        os.environ["SEACODE_DIR"] = args.dir
+
+    path = write_default_config(get_project_root(), force=args.force)
+
+    if path is None:
+        print("seacode.toml already exists (use --force to overwrite).")
+        return 1
+
+    print(f"Wrote {path}")
     return 0
 
 
