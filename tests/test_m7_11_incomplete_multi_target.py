@@ -2,7 +2,7 @@
 Mocked tests for M7.11 -- incomplete multi-target edit detection.
 
 Same testing philosophy as M7.6/M7.7/M7.9/M7.10: no real Ollama server,
-no real project directory (`agent.tools.get_project_root` is patched to
+no real project directory (`seacode.tools.get_project_root` is patched to
 a temp dir), model responses are scripted.
 
 This is a deliberately narrow slice of "incomplete multi-step": it only
@@ -39,8 +39,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import agent.agent as agent_module
-import agent.tools as tools_module
+import seacode.agent as seacode_module
+import seacode.tools as tools_module
 
 
 def fake_response(content: str):
@@ -74,7 +74,7 @@ class ScriptedChat:
 class CheckIncompleteMultiTargetUnitTests(unittest.TestCase):
 
     def test_flags_missing_file(self):
-        message = agent_module.check_incomplete_multi_target_edit(
+        message = seacode_module.check_incomplete_multi_target_edit(
             "Rename `foo` to `bar` in app/api.py and app/client.py.",
             {"app/api.py"},
         )
@@ -83,7 +83,7 @@ class CheckIncompleteMultiTargetUnitTests(unittest.TestCase):
         self.assertIn("app/client.py", message)
 
     def test_accepts_when_both_done(self):
-        message = agent_module.check_incomplete_multi_target_edit(
+        message = seacode_module.check_incomplete_multi_target_edit(
             "Rename `foo` to `bar` in app/api.py and app/client.py.",
             {"app/api.py", "app/client.py"},
         )
@@ -91,7 +91,7 @@ class CheckIncompleteMultiTargetUnitTests(unittest.TestCase):
         self.assertIsNone(message)
 
     def test_ignores_single_file_request(self):
-        message = agent_module.check_incomplete_multi_target_edit(
+        message = seacode_module.check_incomplete_multi_target_edit(
             "Fix a typo in app/api.py.",
             set(),
         )
@@ -99,7 +99,7 @@ class CheckIncompleteMultiTargetUnitTests(unittest.TestCase):
         self.assertIsNone(message)
 
     def test_ignores_when_nothing_modified_yet(self):
-        message = agent_module.check_incomplete_multi_target_edit(
+        message = seacode_module.check_incomplete_multi_target_edit(
             "Rename `foo` to `bar` in app/api.py and app/client.py.",
             set(),
         )
@@ -137,12 +137,12 @@ class M711IntegrationTests(unittest.TestCase):
 
     def run_scripted(self, scripted_responses, user_request):
         chat = ScriptedChat(scripted_responses)
-        with patch.object(agent_module.client, "chat", side_effect=chat):
+        with patch.object(seacode_module.client, "chat", side_effect=chat):
             messages = [
-                {"role": "system", "content": agent_module.SYSTEM_PROMPT},
+                {"role": "system", "content": seacode_module.SYSTEM_PROMPT},
                 {"role": "user", "content": user_request},
             ]
-            answer = agent_module.run_agent(messages)
+            answer = seacode_module.run_agent(messages)
         return answer, messages, chat
 
     # -------------------------------------------------------------

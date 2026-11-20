@@ -4,10 +4,10 @@ import os
 import shlex
 import subprocess
 
-from agent.permissions import request_permission
+from seacode.permissions import request_permission
 
 
-BACKUP_DIR_NAME = ".iggy_backups"
+BACKUP_DIR_NAME = ".seacode_backups"
 
 IGNORED_DIRECTORIES = {
     ".venv",
@@ -39,13 +39,13 @@ ALLOWED_COMMANDS = {
 def get_project_root() -> Path:
     """Return the root directory of the project.
 
-    This is the directory Iggy operates on: the current working
-    directory by default, or IGGY_DIR when set (the `iggy --dir`
+    This is the directory SeaCode operates on: the current working
+    directory by default, or SEACODE_DIR when set (the `seacode --dir`
     flag sets it). Everything -- sandboxing, backups, file tools --
     is anchored here.
     """
 
-    override = os.environ.get("IGGY_DIR")
+    override = os.environ.get("SEACODE_DIR")
 
     if override:
         return Path(override).expanduser().resolve()
@@ -188,7 +188,7 @@ def read_file(path: str) -> str:
 
 
 def is_backup_path(file_path: Path, project_root: Path) -> bool:
-    """Check whether a path falls inside Iggy's own backup directory."""
+    """Check whether a path falls inside SeaCode's own backup directory."""
 
     try:
         relative_path = file_path.relative_to(project_root)
@@ -202,7 +202,7 @@ def backup_file(file_path: Path, project_root: Path) -> str:
     """Save a timestamped copy of a file's current content before it's
     overwritten.
 
-    Backups are stored under .iggy_backups/, mirroring the project's
+    Backups are stored under .seacode_backups/, mirroring the project's
     directory structure, with one subfolder per file and one timestamped
     .bak per backup. Returns the backup's path relative to the project
     root.
@@ -237,7 +237,7 @@ def write_file(path: str, content: str) -> str:
 
     if is_backup_path(file_path, project_root):
         raise PermissionError(
-            "Access denied: cannot modify Iggy's own backup directory "
+            "Access denied: cannot modify SeaCode's own backup directory "
             f"({BACKUP_DIR_NAME}/)."
         )
 
@@ -271,7 +271,7 @@ def restore_file_content(path: str, content: str) -> None:
     replace_in_file when the bad edit was made).
 
     Deliberately NOT registered in TOOLS: the model can never call this
-    directly. It only runs from agent.py's own recovery logic.
+    directly. It only runs from seacode.py's own recovery logic.
     """
 
     project_root = get_project_root()
@@ -284,7 +284,7 @@ def restore_file_content(path: str, content: str) -> None:
 
     if is_backup_path(file_path, project_root):
         raise PermissionError(
-            "Access denied: cannot modify Iggy's own backup directory "
+            "Access denied: cannot modify SeaCode's own backup directory "
             f"({BACKUP_DIR_NAME}/)."
         )
 
@@ -301,7 +301,7 @@ def remove_created_file(path: str) -> None:
 
     Deliberately NOT registered in TOOLS, like restore_file_content:
     the model can never call this directly. It only runs from
-    agent.py's own recovery logic. Silently no-ops if the file is
+    seacode.py's own recovery logic. Silently no-ops if the file is
     already gone.
     """
 
@@ -315,7 +315,7 @@ def remove_created_file(path: str) -> None:
 
     if is_backup_path(file_path, project_root):
         raise PermissionError(
-            "Access denied: cannot modify Iggy's own backup directory "
+            "Access denied: cannot modify SeaCode's own backup directory "
             f"({BACKUP_DIR_NAME}/)."
         )
 
@@ -324,7 +324,7 @@ def remove_created_file(path: str) -> None:
 
 
 def list_backups(path: str | None = None) -> list[dict]:
-    """List Iggy's timestamped backups, oldest first.
+    """List SeaCode's timestamped backups, oldest first.
 
     With a path, lists backups for that file only; otherwise lists
     every backup in the project. Each entry has the project-relative
@@ -377,14 +377,14 @@ def list_backups(path: str | None = None) -> list[dict]:
 
 
 def undo_last_change(path: str | None = None) -> str:
-    """Restore a file from its most recent Iggy backup.
+    """Restore a file from its most recent SeaCode backup.
 
     With a path, restores that file; otherwise restores whichever
     file was most recently backed up. The current content (if the
     file still exists) is backed up first, so an undo can itself be
     undone. Asks for user permission like any other modification.
 
-    Deliberately NOT in MODIFICATION_TOOLS in agent.py: the M7.6
+    Deliberately NOT in MODIFICATION_TOOLS in seacode.py: the M7.6
     semantic check compares results against the request's desired
     text, which would fight a revert on principle. Undo is
     permission-gated and backup-preserving instead.
@@ -453,7 +453,7 @@ def replace_in_file(
 
     if is_backup_path(file_path, project_root):
         raise PermissionError(
-            "Access denied: cannot modify Iggy's own backup directory "
+            "Access denied: cannot modify SeaCode's own backup directory "
             f"({BACKUP_DIR_NAME}/)."
         )
 
@@ -523,7 +523,7 @@ def delete_file(path: str) -> str:
 
     if is_backup_path(file_path, project_root):
         raise PermissionError(
-            "Access denied: cannot modify Iggy's own backup directory "
+            "Access denied: cannot modify SeaCode's own backup directory "
             f"({BACKUP_DIR_NAME}/)."
         )
 

@@ -1,5 +1,5 @@
 """
-Headless tests for the TUI (agent.tui).
+Headless tests for the TUI (seacode.tui).
 
 Constructing the app without running it is enough to cover model
 selection: the configured model must reach the status pills and the
@@ -11,20 +11,20 @@ Run with:  python3 -m pytest tests/test_tui.py -v
 
 import unittest
 
-import agent.agent as agent_module
-from agent.tui import IggyApp
+import seacode.agent as seacode_module
+from seacode.tui import SeaCodeApp
 
 
 class TuiModelTests(unittest.TestCase):
 
     def test_default_model_matches_agent(self):
-        app = IggyApp()
+        app = SeaCodeApp()
 
-        self.assertEqual(app._model, agent_module.MODEL)
+        self.assertEqual(app._model, seacode_module.MODEL)
         self.assertIsNone(app._max_tool_calls)
 
     def test_custom_model_reaches_status_pills(self):
-        app = IggyApp(model="custom-model:tag", max_tool_calls=25)
+        app = SeaCodeApp(model="custom-model:tag", max_tool_calls=25)
 
         self.assertEqual(app._model, "custom-model:tag")
         self.assertEqual(app._max_tool_calls, 25)

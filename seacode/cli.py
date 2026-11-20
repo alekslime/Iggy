@@ -1,14 +1,14 @@
-"""Command-line entry point for Iggy (`iggy`).
+"""Command-line entry point for SeaCode (`seacode`).
 
 Commands:
-  iggy              start the chat REPL (default)
-  iggy tui          start the full-screen terminal UI
-  iggy undo         restore a file from its most recent backup
+  seacode              start the chat REPL (default)
+  seacode tui          start the full-screen terminal UI
+  seacode undo         restore a file from its most recent backup
 
 Global options (--model, --host, --max-tools, --dir) apply to the
 REPL and the TUI; `undo` only needs --dir. Each also has an
-environment-variable equivalent (IGGY_MODEL, IGGY_HOST,
-IGGY_MAX_TOOLS, IGGY_DIR); the flag wins when both are given.
+environment-variable equivalent (SEACODE_MODEL, SEACODE_HOST,
+SEACODE_MAX_TOOLS, SEACODE_DIR); the flag wins when both are given.
 """
 
 import argparse
@@ -17,14 +17,14 @@ import sys
 
 import ollama
 
-import agent.agent as agent_module
-from agent import __version__
-from agent.tools import get_project_root, list_backups, undo_last_change
+import seacode.agent as seacode_module
+from seacode import __version__
+from seacode.tools import get_project_root, list_backups, undo_last_change
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="iggy",
+        prog="seacode",
         description="A local-first CLI AI programming tool.",
     )
     parser.add_argument(
@@ -38,16 +38,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--model",
         default=None,
         help=(
-            f"Ollama model to use (default: $IGGY_MODEL or "
-            f"'{agent_module.DEFAULT_MODEL}')"
+            f"Ollama model to use (default: $SEACODE_MODEL or "
+            f"'{seacode_module.DEFAULT_MODEL}')"
         ),
     )
     common.add_argument(
         "--host",
         default=None,
         help=(
-            "Ollama host (default: $IGGY_HOST, $OLLAMA_HOST, or "
-            f"'{agent_module.DEFAULT_HOST}')"
+            "Ollama host (default: $SEACODE_HOST, $OLLAMA_HOST, or "
+            f"'{seacode_module.DEFAULT_HOST}')"
         ),
     )
     common.add_argument(
@@ -55,8 +55,8 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help=(
-            "Max tool calls per agent turn (default: $IGGY_MAX_TOOLS "
-            f"or {agent_module.MAX_TOOL_CALLS})"
+            "Max tool calls per agent turn (default: $SEACODE_MAX_TOOLS "
+            f"or {seacode_module.MAX_TOOL_CALLS})"
         ),
     )
     common.add_argument(
@@ -64,7 +64,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Project directory to operate on "
-            "(default: $IGGY_DIR or the current directory)"
+            "(default: $SEACODE_DIR or the current directory)"
         ),
     )
 
@@ -107,12 +107,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Project directory to operate on "
-            "(default: $IGGY_DIR or the current directory)"
+            "(default: $SEACODE_DIR or the current directory)"
         ),
     )
     undo.set_defaults(func=run_undo)
 
-    # Bare `iggy` behaves like `iggy repl`, accepting the same flags.
+    # Bare `seacode` behaves like `seacode repl`, accepting the same flags.
     # argparse can't attach one shared-flag group to two parser levels
     # at once, so the top-level parser carries its own hidden copies
     # for that case.
@@ -130,20 +130,20 @@ def build_parser() -> argparse.ArgumentParser:
 def apply_common_options(args) -> tuple:
     """Apply --dir/--host and resolve --model/--max-tools.
 
-    Returns (model, max_tool_calls). --dir is exported as IGGY_DIR
+    Returns (model, max_tool_calls). --dir is exported as SEACODE_DIR
     so the tools pick it up; --host rebuilds the Ollama client.
     """
 
     if getattr(args, "dir", None):
-        os.environ["IGGY_DIR"] = args.dir
+        os.environ["SEACODE_DIR"] = args.dir
 
     if getattr(args, "host", None):
-        agent_module.client = ollama.Client(
-            host=agent_module.resolve_host(args.host)
+        seacode_module.client = ollama.Client(
+            host=seacode_module.resolve_host(args.host)
         )
 
-    model = agent_module.resolve_model(getattr(args, "model", None))
-    max_tool_calls = agent_module.resolve_max_tool_calls(
+    model = seacode_module.resolve_model(getattr(args, "model", None))
+    max_tool_calls = seacode_module.resolve_max_tool_calls(
         getattr(args, "max_tools", None)
     )
 
@@ -152,21 +152,21 @@ def apply_common_options(args) -> tuple:
 
 def run_repl(args) -> int:
     model, max_tool_calls = apply_common_options(args)
-    agent_module.run_repl(model=model, max_tool_calls=max_tool_calls)
+    seacode_module.run_repl(model=model, max_tool_calls=max_tool_calls)
     return 0
 
 
 def run_tui(args) -> int:
-    from agent.tui import IggyApp
+    from seacode.tui import SeaCodeApp
 
     model, max_tool_calls = apply_common_options(args)
-    IggyApp(model=model, max_tool_calls=max_tool_calls).run()
+    SeaCodeApp(model=model, max_tool_calls=max_tool_calls).run()
     return 0
 
 
 def run_undo(args) -> int:
     if args.dir:
-        os.environ["IGGY_DIR"] = args.dir
+        os.environ["SEACODE_DIR"] = args.dir
 
     if args.list:
         backups = list_backups(args.path)

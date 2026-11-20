@@ -2,7 +2,7 @@
 Mocked tests for M7.7 -- wrong-file edit detection.
 
 Same testing philosophy as M7.6: no real Ollama server, no real project
-directory (`agent.tools.get_project_root` is patched to a temp dir), and
+directory (`seacode.tools.get_project_root` is patched to a temp dir), and
 the model is a `ScriptedChat` that plays back a fixed response list.
 
 Scenarios covered:
@@ -39,8 +39,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import agent.agent as agent_module
-import agent.tools as tools_module
+import seacode.agent as seacode_module
+import seacode.tools as tools_module
 
 
 def fake_response(content: str):
@@ -82,24 +82,24 @@ class ExtractMentionedFilenamesTests(unittest.TestCase):
 
     def test_finds_bare_and_path_filenames(self):
         text = "Fix the bug in utils.py, it's called from agent/tools.py"
-        found = agent_module.extract_mentioned_filenames(text)
+        found = seacode_module.extract_mentioned_filenames(text)
         self.assertIn("utils.py", found)
         self.assertIn("agent/tools.py", found)
 
     def test_ignores_unrelated_word_dot_word(self):
         text = "e.g. version 2.0 should work fine, see p.s. below"
-        found = agent_module.extract_mentioned_filenames(text)
+        found = seacode_module.extract_mentioned_filenames(text)
         self.assertEqual(found, set())
 
     def test_strips_surrounding_quotes_and_leading_dotslash(self):
         text = 'Update `./agent/tools.py` and "config.json" please'
-        found = agent_module.extract_mentioned_filenames(text)
+        found = seacode_module.extract_mentioned_filenames(text)
         self.assertIn("agent/tools.py", found)
         self.assertIn("config.json", found)
 
     def test_no_filenames_returns_empty_set(self):
         text = "Please fix the bug where the counter resets incorrectly."
-        self.assertEqual(agent_module.extract_mentioned_filenames(text), set())
+        self.assertEqual(seacode_module.extract_mentioned_filenames(text), set())
 
 
 class VerifyTargetFileTests(unittest.TestCase):
@@ -121,21 +121,21 @@ class VerifyTargetFileTests(unittest.TestCase):
 
     def test_no_mentioned_filenames_skips_check(self):
         self.make_file("app/config.py")
-        result = agent_module.verify_target_file(
+        result = seacode_module.verify_target_file(
             "app/settings.py", "Fix the bug where things break."
         )
         self.assertIsNone(result)
 
     def test_full_path_match_is_not_flagged(self):
         self.make_file("app/config.py")
-        result = agent_module.verify_target_file(
+        result = seacode_module.verify_target_file(
             "app/config.py", "Update `app/config.py` to fix the DEBUG flag."
         )
         self.assertIsNone(result)
 
     def test_bare_name_match_with_single_candidate_is_not_flagged(self):
         self.make_file("app/config.py")
-        result = agent_module.verify_target_file(
+        result = seacode_module.verify_target_file(
             "app/config.py", "Update config.py to fix the DEBUG flag."
         )
         self.assertIsNone(result)
@@ -143,7 +143,7 @@ class VerifyTargetFileTests(unittest.TestCase):
     def test_bare_name_match_with_multiple_candidates_is_ambiguous(self):
         self.make_file("app/config.py")
         self.make_file("lib/config.py")
-        result = agent_module.verify_target_file(
+        result = seacode_module.verify_target_file(
             "lib/config.py", "Update config.py to fix the DEBUG flag."
         )
         self.assertIsNotNone(result)
@@ -153,7 +153,7 @@ class VerifyTargetFileTests(unittest.TestCase):
     def test_clear_mismatch_with_single_candidate_redirects(self):
         self.make_file("app/config.py")
         self.make_file("app/settings.py")
-        result = agent_module.verify_target_file(
+        result = seacode_module.verify_target_file(
             "app/settings.py", "Update config.py to fix the DEBUG flag."
         )
         self.assertIsNotNone(result)
@@ -163,7 +163,7 @@ class VerifyTargetFileTests(unittest.TestCase):
         # Mentioned filename doesn't exist anywhere in the project --
         # not enough evidence to call this wrong (e.g. a new file).
         self.make_file("app/settings.py")
-        result = agent_module.verify_target_file(
+        result = seacode_module.verify_target_file(
             "app/settings.py", "Create a new file called config.py."
         )
         self.assertIsNone(result)
@@ -202,12 +202,12 @@ class M77IntegrationTests(unittest.TestCase):
 
     def run_scripted(self, scripted_responses, user_request):
         chat = ScriptedChat(scripted_responses)
-        with patch.object(agent_module.client, "chat", side_effect=chat):
+        with patch.object(seacode_module.client, "chat", side_effect=chat):
             messages = [
-                {"role": "system", "content": agent_module.SYSTEM_PROMPT},
+                {"role": "system", "content": seacode_module.SYSTEM_PROMPT},
                 {"role": "user", "content": user_request},
             ]
-            answer = agent_module.run_agent(messages)
+            answer = seacode_module.run_agent(messages)
         return answer, messages, chat
 
     # -------------------------------------------------------------

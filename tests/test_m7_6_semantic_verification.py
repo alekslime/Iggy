@@ -2,7 +2,7 @@
 Mocked tests for M7.6 -- semantic edit verification.
 
 These tests never talk to a real Ollama server and never touch the real
-project directory: `agent.tools.get_project_root` is patched to a
+project directory: `seacode.tools.get_project_root` is patched to a
 temporary directory for the duration of each test, and the Ollama client
 is replaced with a small fake that plays back a scripted sequence of
 "model" responses.
@@ -33,8 +33,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import agent.agent as agent_module
-import agent.tools as tools_module
+import seacode.agent as seacode_module
+import seacode.tools as tools_module
 
 
 # The actual current content of agent/permissions.py in this project.
@@ -46,7 +46,7 @@ ORIGINAL_PERMISSIONS_CONTENT = (
     '    confirmation, returning True only on an explicit "y".\n'
     '    """\n'
     '\n'
-    '    print("\\nIggy needs your permission to:")\n'
+    '    print("\\nSeaCode needs your permission to:")\n'
     '    print(f"  {action}")\n'
     '\n'
     '    response = input("\\nProceed? [y/N]: ").strip().lower()\n'
@@ -127,12 +127,12 @@ class M76TestCase(unittest.TestCase):
 
     def run_scripted(self, scripted_responses, user_request):
         chat = ScriptedChat(scripted_responses)
-        with patch.object(agent_module.client, "chat", side_effect=chat):
+        with patch.object(seacode_module.client, "chat", side_effect=chat):
             messages = [
-                {"role": "system", "content": agent_module.SYSTEM_PROMPT},
+                {"role": "system", "content": seacode_module.SYSTEM_PROMPT},
                 {"role": "user", "content": user_request},
             ]
-            answer = agent_module.run_agent(messages)
+            answer = seacode_module.run_agent(messages)
         return answer, messages, chat
 
     def current_permissions_content(self):
@@ -183,7 +183,7 @@ class M76TestCase(unittest.TestCase):
         self.assertIn(
             "def request_permission(action: str) -> bool:", final_content
         )
-        self.assertIn('print("\\nIggy needs your permission to:")', final_content)
+        self.assertIn('print("\\nSeaCode needs your permission to:")', final_content)
         self.assertIn('response = input("\\nProceed? [y/N]: ").strip().lower()', final_content)
         self.assertIn('return response == "y"', final_content)
         self.assertNotIn(
@@ -273,9 +273,9 @@ class M76TestCase(unittest.TestCase):
 
         chat = ScriptedChat(scripted)
 
-        with patch.object(agent_module.client, "chat", side_effect=chat):
+        with patch.object(seacode_module.client, "chat", side_effect=chat):
             messages = [
-                {"role": "system", "content": agent_module.SYSTEM_PROMPT},
+                {"role": "system", "content": seacode_module.SYSTEM_PROMPT},
                 {"role": "user", "content": user_request},
             ]
 
@@ -286,7 +286,7 @@ class M76TestCase(unittest.TestCase):
             # once ScriptedChat raises (it will, on the 2nd call), then
             # confirm content was reverted despite the run not finishing.
             with self.assertRaises(AssertionError):
-                agent_module.run_agent(messages)
+                seacode_module.run_agent(messages)
 
         # The bad write_file DID execute (tool call happened) but M7.6
         # verification should have reverted it immediately afterwards.
@@ -430,7 +430,7 @@ class M76TestCase(unittest.TestCase):
         for request, expected in cases:
             with self.subTest(request=request):
                 self.assertEqual(
-                    agent_module.extract_change_pair(request),
+                    seacode_module.extract_change_pair(request),
                     expected,
                 )
 
@@ -439,7 +439,7 @@ class M76TestCase(unittest.TestCase):
         # phrasings -- should cleanly fall back to None rather than
         # guessing or raising.
         request = "Please clean up the permissions module a bit."
-        self.assertIsNone(agent_module.extract_change_pair(request))
+        self.assertIsNone(seacode_module.extract_change_pair(request))
 
     def test_broadened_phrasing_triggers_the_write_file_guard(self):
         """'replace `X` with `Y`' should now also be recognized by the
@@ -491,7 +491,7 @@ class M76TestCase(unittest.TestCase):
 
         self.assertLess(
             len(small_content),
-            agent_module.MIN_LENGTH_FOR_GENERIC_DESTRUCTIVE_CHECK,
+            seacode_module.MIN_LENGTH_FOR_GENERIC_DESTRUCTIVE_CHECK,
         )
 
         user_request = "Clean up note.txt."
@@ -529,7 +529,7 @@ class M76TestCase(unittest.TestCase):
         """
         self.assertGreaterEqual(
             len(ORIGINAL_PERMISSIONS_CONTENT),
-            agent_module.MIN_LENGTH_FOR_GENERIC_DESTRUCTIVE_CHECK,
+            seacode_module.MIN_LENGTH_FOR_GENERIC_DESTRUCTIVE_CHECK,
         )
 
         user_request = "Clean up agent/permissions.py a little."
@@ -544,13 +544,13 @@ class M76TestCase(unittest.TestCase):
 
         chat = ScriptedChat(scripted)
 
-        with patch.object(agent_module.client, "chat", side_effect=chat):
+        with patch.object(seacode_module.client, "chat", side_effect=chat):
             messages = [
-                {"role": "system", "content": agent_module.SYSTEM_PROMPT},
+                {"role": "system", "content": seacode_module.SYSTEM_PROMPT},
                 {"role": "user", "content": user_request},
             ]
             with self.assertRaises(AssertionError):
-                agent_module.run_agent(messages)
+                seacode_module.run_agent(messages)
 
         self.assertEqual(
             self.current_permissions_content(),

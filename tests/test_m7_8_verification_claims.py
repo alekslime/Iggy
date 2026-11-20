@@ -2,7 +2,7 @@
 Mocked tests for M7.8 -- false verification claim detection.
 
 Same testing philosophy as M7.6/M7.7: no real Ollama server, no real
-project directory (`agent.tools.get_project_root` is patched to a temp
+project directory (`seacode.tools.get_project_root` is patched to a temp
 dir), model responses are scripted.
 
 Scenarios covered:
@@ -31,8 +31,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import agent.agent as agent_module
-import agent.tools as tools_module
+import seacode.agent as seacode_module
+import seacode.tools as tools_module
 
 
 def fake_response(content: str):
@@ -67,23 +67,23 @@ class ClaimsVerificationTests(unittest.TestCase):
 
     def test_recognizes_common_claim_phrasings(self):
         self.assertTrue(
-            agent_module.claims_verification("I verified the change works.")
+            seacode_module.claims_verification("I verified the change works.")
         )
         self.assertTrue(
-            agent_module.claims_verification("Done -- tests pass now.")
+            seacode_module.claims_verification("Done -- tests pass now.")
         )
         self.assertTrue(
-            agent_module.claims_verification(
+            seacode_module.claims_verification(
                 "I ran the tests and confirmed the fix."
             )
         )
 
     def test_plain_answer_is_not_a_claim(self):
         self.assertFalse(
-            agent_module.claims_verification("I updated the DEBUG flag.")
+            seacode_module.claims_verification("I updated the DEBUG flag.")
         )
-        self.assertFalse(agent_module.claims_verification(""))
-        self.assertFalse(agent_module.claims_verification(None))
+        self.assertFalse(seacode_module.claims_verification(""))
+        self.assertFalse(seacode_module.claims_verification(None))
 
 
 class M78IntegrationTests(unittest.TestCase):
@@ -111,12 +111,12 @@ class M78IntegrationTests(unittest.TestCase):
 
     def run_scripted(self, scripted_responses, user_request):
         chat = ScriptedChat(scripted_responses)
-        with patch.object(agent_module.client, "chat", side_effect=chat):
+        with patch.object(seacode_module.client, "chat", side_effect=chat):
             messages = [
-                {"role": "system", "content": agent_module.SYSTEM_PROMPT},
+                {"role": "system", "content": seacode_module.SYSTEM_PROMPT},
                 {"role": "user", "content": user_request},
             ]
-            answer = agent_module.run_agent(messages)
+            answer = seacode_module.run_agent(messages)
         return answer, messages, chat
 
     # -------------------------------------------------------------

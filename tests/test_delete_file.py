@@ -28,8 +28,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import agent.agent as agent_module
-import agent.tools as tools_module
+import seacode.agent as seacode_module
+import seacode.tools as tools_module
 
 
 def fake_response(content: str):
@@ -124,7 +124,7 @@ class DeleteFileUnitTests(unittest.TestCase):
 
     def test_delete_backup_dir_raises(self):
         with self.assertRaises(PermissionError):
-            tools_module.delete_file(".iggy_backups/some.bak")
+            tools_module.delete_file(".seacode_backups/some.bak")
 
     def test_delete_is_registered_as_agent_tool(self):
         self.assertIs(
@@ -137,7 +137,7 @@ class ClassifyDeleteTests(unittest.TestCase):
 
     def test_success(self):
         self.assertEqual(
-            agent_module.classify_modification_result(
+            seacode_module.classify_modification_result(
                 "delete_file", "File deleted successfully: a.txt"
             ),
             "success",
@@ -145,7 +145,7 @@ class ClassifyDeleteTests(unittest.TestCase):
 
     def test_denied(self):
         self.assertEqual(
-            agent_module.classify_modification_result(
+            seacode_module.classify_modification_result(
                 "delete_file", "File modification denied by user."
             ),
             "denied",
@@ -153,13 +153,13 @@ class ClassifyDeleteTests(unittest.TestCase):
 
     def test_failed(self):
         self.assertEqual(
-            agent_module.classify_modification_result(
+            seacode_module.classify_modification_result(
                 "delete_file", {"error": "boom"}
             ),
             "failed",
         )
         self.assertEqual(
-            agent_module.classify_modification_result(
+            seacode_module.classify_modification_result(
                 "delete_file", "Delete failed: nope."
             ),
             "failed",
@@ -191,12 +191,12 @@ class DeleteFileIntegrationTests(unittest.TestCase):
 
     def run_scripted(self, scripted_responses, user_request):
         chat = ScriptedChat(scripted_responses)
-        with patch.object(agent_module.client, "chat", side_effect=chat):
+        with patch.object(seacode_module.client, "chat", side_effect=chat):
             messages = [
-                {"role": "system", "content": agent_module.SYSTEM_PROMPT},
+                {"role": "system", "content": seacode_module.SYSTEM_PROMPT},
                 {"role": "user", "content": user_request},
             ]
-            answer = agent_module.run_agent(messages)
+            answer = seacode_module.run_agent(messages)
         return answer, messages, chat
 
     def test_read_then_delete_finishes(self):

@@ -1,4 +1,4 @@
-from agent.cli import main
+from seacode.cli import main
 
 
 if __name__ == "__main__":

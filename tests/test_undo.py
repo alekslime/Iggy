@@ -1,9 +1,9 @@
 """
 Tests for backup listing and undo (tools.list_backups,
-tools.undo_last_change, and the `iggy undo` command's backend).
+tools.undo_last_change, and the `seacode undo` command's backend).
 
 Same philosophy as the M7.x suites: no real project directory
-(`agent.tools.get_project_root` is patched to a temp dir) and
+(`seacode.tools.get_project_root` is patched to a temp dir) and
 permission prompts are scripted.
 
 Scenarios covered:
@@ -26,7 +26,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import agent.tools as tools_module
+import seacode.tools as tools_module
 
 
 class UndoTests(unittest.TestCase):

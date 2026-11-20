@@ -2,11 +2,11 @@
 Mocked tests for M7.10 -- syntax validation.
 
 Same testing philosophy as M7.6/M7.7/M7.9: no real Ollama server, no
-real project directory (`agent.tools.get_project_root` is patched to a
+real project directory (`seacode.tools.get_project_root` is patched to a
 temp dir), model responses are scripted.
 
 Checked regardless of whether the file already had a syntax error
-before the edit -- the bar is "nothing Iggy leaves behind is broken
+before the edit -- the bar is "nothing SeaCode leaves behind is broken
 Python," not "don't make an existing problem worse." This differs from
 M7.6's destructive-change check, which deliberately compares before vs.
 after.
@@ -38,8 +38,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import agent.agent as agent_module
-import agent.tools as tools_module
+import seacode.agent as seacode_module
+import seacode.tools as tools_module
 
 
 def fake_response(content: str):
@@ -74,13 +74,13 @@ class VerifyPythonSyntaxUnitTests(unittest.TestCase):
 
     def test_valid_code_passes(self):
         self.assertIsNone(
-            agent_module.verify_python_syntax(
+            seacode_module.verify_python_syntax(
                 "app/utils.py", "def add(a, b):\n    return a + b\n"
             )
         )
 
     def test_syntax_error_is_caught_and_described(self):
-        message = agent_module.verify_python_syntax(
+        message = seacode_module.verify_python_syntax(
             "app/utils.py", "def add(a, b:\n    return a + b\n"
         )
 
@@ -90,18 +90,18 @@ class VerifyPythonSyntaxUnitTests(unittest.TestCase):
 
     def test_non_python_file_is_skipped(self):
         self.assertIsNone(
-            agent_module.verify_python_syntax(
+            seacode_module.verify_python_syntax(
                 "notes/todo.txt", "def add(a, b:\n    this is not python\n"
             )
         )
 
     def test_non_string_content_is_skipped(self):
         self.assertIsNone(
-            agent_module.verify_python_syntax("app/utils.py", None)
+            seacode_module.verify_python_syntax("app/utils.py", None)
         )
 
     def test_non_string_path_is_skipped(self):
-        self.assertIsNone(agent_module.verify_python_syntax(None, "x = 1"))
+        self.assertIsNone(seacode_module.verify_python_syntax(None, "x = 1"))
 
 
 class M710IntegrationTests(unittest.TestCase):
@@ -137,12 +137,12 @@ class M710IntegrationTests(unittest.TestCase):
 
     def run_scripted(self, scripted_responses, user_request):
         chat = ScriptedChat(scripted_responses)
-        with patch.object(agent_module.client, "chat", side_effect=chat):
+        with patch.object(seacode_module.client, "chat", side_effect=chat):
             messages = [
-                {"role": "system", "content": agent_module.SYSTEM_PROMPT},
+                {"role": "system", "content": seacode_module.SYSTEM_PROMPT},
                 {"role": "user", "content": user_request},
             ]
-            answer = agent_module.run_agent(messages)
+            answer = seacode_module.run_agent(messages)
         return answer, messages, chat
 
     # -------------------------------------------------------------

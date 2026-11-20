@@ -7,7 +7,7 @@ from pathlib import Path
 
 import ollama
 
-from agent.tools import (
+from seacode.tools import (
     TOOLS,
     list_files,
     read_file,
@@ -27,24 +27,24 @@ MODIFICATION_TOOLS = {"write_file", "replace_in_file", "delete_file"}
 
 
 def resolve_model(cli_value=None) -> str:
-    """Return the model to use: CLI flag wins, then IGGY_MODEL, then
+    """Return the model to use: CLI flag wins, then SEACODE_MODEL, then
     the built-in default."""
 
     if cli_value:
         return cli_value
 
-    return os.environ.get("IGGY_MODEL") or DEFAULT_MODEL
+    return os.environ.get("SEACODE_MODEL") or DEFAULT_MODEL
 
 
 def resolve_host(cli_value=None) -> str:
-    """Return the Ollama host to use: CLI flag wins, then IGGY_HOST /
+    """Return the Ollama host to use: CLI flag wins, then SEACODE_HOST /
     OLLAMA_HOST, then the local default."""
 
     if cli_value:
         return cli_value
 
     return (
-        os.environ.get("IGGY_HOST")
+        os.environ.get("SEACODE_HOST")
         or os.environ.get("OLLAMA_HOST")
         or DEFAULT_HOST
     )
@@ -52,13 +52,13 @@ def resolve_host(cli_value=None) -> str:
 
 def resolve_max_tool_calls(cli_value=None) -> int:
     """Return the per-run tool-call limit: CLI flag wins, then
-    IGGY_MAX_TOOLS, then the built-in default. Unparseable values
+    SEACODE_MAX_TOOLS, then the built-in default. Unparseable values
     fall back to the default rather than crashing the run."""
 
     if cli_value is not None:
         return cli_value
 
-    env_value = os.environ.get("IGGY_MAX_TOOLS")
+    env_value = os.environ.get("SEACODE_MAX_TOOLS")
 
     if env_value:
         try:
@@ -108,7 +108,7 @@ MAX_VERIFICATION_CLAIM_RETRY_ATTEMPTS = 2
 # file creation that succeeded, passed semantic and target-file
 # verification, but left a .py file that doesn't parse as valid Python
 # (M7.10). Checked regardless of whether the file already had a syntax
-# error before the edit -- nothing Iggy touches or creates should exit
+# error before the edit -- nothing SeaCode touches or creates should exit
 # a run non-parseable, existing problems included.
 MAX_SYNTAX_RETRY_ATTEMPTS = 2
 
@@ -280,7 +280,7 @@ CHANGE_PAIR_PATTERNS = (
 
 # M7.7 uses a small allowlist of common source/config extensions to
 # find filename-like tokens in a user's request (e.g. "utils.py",
-# "agent/tools.py"). Restricting to known extensions -- rather than
+# "seacode/tools.py"). Restricting to known extensions -- rather than
 # matching any "word.word" pattern -- avoids false positives like
 # "e.g." or a version number such as "v2.0".
 _FILENAME_EXTENSIONS = (
@@ -302,7 +302,7 @@ client = ollama.Client(host=resolve_host())
 
 
 SYSTEM_PROMPT = """
-You are a local computer engineering agent.
+You are a local computer engineering seacode.
 
 You have access to tools and are expected to ACT on tasks when the user asks you to modify the project.
 
@@ -923,7 +923,7 @@ def verify_target_file(path: str, last_user_request: str):
 #
 # Deliberately checked against every .py file this run touches or
 # creates, not just ones that parsed cleanly before the edit -- the
-# bar is "nothing Iggy leaves behind is broken Python," not "don't make
+# bar is "nothing SeaCode leaves behind is broken Python," not "don't make
 # an existing problem worse."
 
 
@@ -1987,7 +1987,7 @@ def run_repl(model=None, max_tool_calls=None):
         }
     ]
 
-    print("Iggy")
+    print("SeaCode")
     print(f"Model: {model}")
     print("----------------------------------------")
     print("Type 'quit' to exit.")
@@ -2014,11 +2014,11 @@ def run_repl(model=None, max_tool_calls=None):
         )
 
         if answer is not None:
-            print(f"\nIggy: {answer}")
+            print(f"\nSeaCode: {answer}")
 
 
 def main():
-    """Legacy entry point (equivalent to `iggy` with defaults)."""
+    """Legacy entry point (equivalent to `seacode` with defaults)."""
 
     run_repl()
 

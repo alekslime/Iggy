@@ -2,7 +2,7 @@
 Mocked tests for M7.12 -- scope creep detection.
 
 Same testing philosophy as the rest of M7.x: no real Ollama server, no
-real project directory (`agent.tools.get_project_root` is patched to a
+real project directory (`seacode.tools.get_project_root` is patched to a
 temp dir), model responses are scripted.
 
 This is the fuzziest check in the M7.9-12 group, and deliberately the
@@ -48,8 +48,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import agent.agent as agent_module
-import agent.tools as tools_module
+import seacode.agent as seacode_module
+import seacode.tools as tools_module
 
 
 def fake_response(content: str):
@@ -83,7 +83,7 @@ class ScriptedChat:
 class CheckScopeCreepUnitTests(unittest.TestCase):
 
     def test_flags_extra_file_with_scope_language(self):
-        message = agent_module.check_scope_creep(
+        message = seacode_module.check_scope_creep(
             "Only change app/config.py, don't touch anything else.",
             {"app/config.py", "app/settings.py"},
         )
@@ -92,7 +92,7 @@ class CheckScopeCreepUnitTests(unittest.TestCase):
         self.assertIn("app/settings.py", message)
 
     def test_no_scope_language_is_never_flagged(self):
-        message = agent_module.check_scope_creep(
+        message = seacode_module.check_scope_creep(
             "Update app/config.py.",
             {"app/config.py", "app/settings.py"},
         )
@@ -100,7 +100,7 @@ class CheckScopeCreepUnitTests(unittest.TestCase):
         self.assertIsNone(message)
 
     def test_no_named_file_is_never_flagged(self):
-        message = agent_module.check_scope_creep(
+        message = seacode_module.check_scope_creep(
             "Only fix the bug, don't touch anything else.",
             {"app/config.py", "app/settings.py"},
         )
@@ -108,7 +108,7 @@ class CheckScopeCreepUnitTests(unittest.TestCase):
         self.assertIsNone(message)
 
     def test_no_extra_file_is_not_flagged(self):
-        message = agent_module.check_scope_creep(
+        message = seacode_module.check_scope_creep(
             "Only change app/config.py, don't touch anything else.",
             {"app/config.py"},
         )
@@ -116,7 +116,7 @@ class CheckScopeCreepUnitTests(unittest.TestCase):
         self.assertIsNone(message)
 
     def test_nothing_modified_yet_is_not_flagged(self):
-        message = agent_module.check_scope_creep(
+        message = seacode_module.check_scope_creep(
             "Only change app/config.py, don't touch anything else.",
             set(),
         )
@@ -154,12 +154,12 @@ class M712IntegrationTests(unittest.TestCase):
 
     def run_scripted(self, scripted_responses, user_request):
         chat = ScriptedChat(scripted_responses)
-        with patch.object(agent_module.client, "chat", side_effect=chat):
+        with patch.object(seacode_module.client, "chat", side_effect=chat):
             messages = [
-                {"role": "system", "content": agent_module.SYSTEM_PROMPT},
+                {"role": "system", "content": seacode_module.SYSTEM_PROMPT},
                 {"role": "user", "content": user_request},
             ]
-            answer = agent_module.run_agent(messages)
+            answer = seacode_module.run_agent(messages)
         return answer, messages, chat
 
     # -------------------------------------------------------------

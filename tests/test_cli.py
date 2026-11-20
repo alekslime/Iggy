@@ -1,5 +1,5 @@
 """
-Tests for the `iggy` command-line interface (agent.cli).
+Tests for the `seacode` command-line interface (seacode.cli).
 
 Covers argument parsing for every command and the `undo` command's
 behavior against a temp project. The REPL and TUI runners are not
@@ -19,9 +19,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import agent.agent as agent_module
-import agent.cli as cli_module
-import agent.tools as tools_module
+import seacode.agent as seacode_module
+import seacode.cli as cli_module
+import seacode.tools as tools_module
 
 
 class ParserTests(unittest.TestCase):
@@ -77,21 +77,21 @@ class ApplyCommonOptionsTests(unittest.TestCase):
         )
 
         with patch.dict(os.environ):
-            os.environ.pop("IGGY_DIR", None)
+            os.environ.pop("SEACODE_DIR", None)
             model, max_tools = cli_module.apply_common_options(args)
 
         self.assertEqual(model, "cli-model")
         self.assertEqual(max_tools, 4)
-        self.assertNotIn("IGGY_DIR", os.environ)
+        self.assertNotIn("SEACODE_DIR", os.environ)
 
-    def test_dir_is_exported_as_iggy_dir(self):
+    def test_dir_is_exported_as_seacode_dir(self):
         args = SimpleNamespace(
             model=None, host=None, max_tools=None, dir="/tmp/proj"
         )
 
         with patch.dict(os.environ):
             cli_module.apply_common_options(args)
-            self.assertEqual(os.environ["IGGY_DIR"], "/tmp/proj")
+            self.assertEqual(os.environ["SEACODE_DIR"], "/tmp/proj")
 
     def test_host_rebuilds_client(self):
         args = SimpleNamespace(
@@ -101,7 +101,7 @@ class ApplyCommonOptionsTests(unittest.TestCase):
             dir=None,
         )
 
-        original_client = agent_module.client
+        original_client = seacode_module.client
         try:
             with patch("ollama.Client") as mock_client:
                 cli_module.apply_common_options(args)
@@ -109,10 +109,10 @@ class ApplyCommonOptionsTests(unittest.TestCase):
                     host="http://example:11434"
                 )
                 self.assertIs(
-                    agent_module.client, mock_client.return_value
+                    seacode_module.client, mock_client.return_value
                 )
         finally:
-            agent_module.client = original_client
+            seacode_module.client = original_client
 
 
 class RunUndoTests(unittest.TestCase):
@@ -129,7 +129,7 @@ class RunUndoTests(unittest.TestCase):
 
     def use_temp_project(self):
         """Scope the tools to this test's temp dir (all tests except
-        the --dir one, which needs the real IGGY_DIR lookup)."""
+        the --dir one, which needs the real SEACODE_DIR lookup)."""
 
         root_patcher = patch.object(
             tools_module, "get_project_root", return_value=self.project_root
@@ -186,7 +186,7 @@ class RunUndoTests(unittest.TestCase):
         other.mkdir()
         (other / "n.txt").write_text("v1\n")
 
-        with patch.dict(os.environ, {"IGGY_DIR": str(other)}):
+        with patch.dict(os.environ, {"SEACODE_DIR": str(other)}):
             tools_module.write_file("n.txt", "v2\n")
 
         with patch.dict(os.environ):

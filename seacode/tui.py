@@ -1,10 +1,10 @@
 """
-Iggy TUI -- a terminal interface for the agent, styled after OpenCode's
+SeaCode TUI -- a terminal interface for the agent, styled after OpenCode's
 splash-screen look: a blocky wordmark and a centered rounded input up
 front, which hands off to a live feed + diff view once a conversation
 actually starts, with a slim status bar pinned to the bottom throughout.
 
-Design choice (per project discussion): agent.py's run_agent() keeps
+Design choice (per project discussion): seacode.py's run_agent() keeps
 its existing print()-based logging exactly as-is -- no refactor to
 structured events. This app runs run_agent() in a background thread,
 redirects stdout into itself so every line lands in the live feed as
@@ -21,14 +21,14 @@ terminal app rather than a plain REPL:
     is ever in flight at a time, which the UI already enforces by
     disabling input while a turn is running.
 
-  - permissions: agent/tools.py calls agent.permissions.request_permission,
+  - permissions: seacode/tools.py calls seacode.permissions.request_permission,
     which normally blocks on a raw input(). Textual owns the terminal,
     so that call is monkeypatched (on mount) to _PermissionBridge.request,
     which hands control to the UI thread, blocks the worker thread on a
     threading.Event, and resumes once the person answers in the prompt
     line at the bottom of the screen.
 
-Run with:  iggy tui
+Run with:  seacode tui
 """
 
 import contextlib
@@ -44,9 +44,9 @@ from textual.containers import Horizontal, Vertical
 from textual.reactive import reactive
 from textual.widgets import Input, RichLog, Static
 
-import agent.agent as agent_module
-import agent.tools as tools_module
-from agent import __version__ as VERSION
+import seacode.agent as seacode_module
+import seacode.tools as tools_module
+from seacode import __version__ as VERSION
 
 LOGO = (
     "░██                                 \n"
@@ -72,7 +72,7 @@ class _ThreadedStdoutBridge:
     finished line to the App on the UI thread.
     """
 
-    def __init__(self, app: "IggyApp"):
+    def __init__(self, app: "SeaCodeApp"):
         self._app = app
         self._buffer = ""
 
@@ -101,12 +101,12 @@ class _ThreadedStdoutBridge:
 
 
 class _PermissionBridge:
-    """Replaces agent.tools.request_permission for the duration of the
+    """Replaces seacode.tools.request_permission for the duration of the
     TUI session. Called from the worker thread; blocks it on a
     threading.Event until the person answers in the UI thread.
     """
 
-    def __init__(self, app: "IggyApp"):
+    def __init__(self, app: "SeaCodeApp"):
         self._app = app
 
     def request(self, action: str) -> bool:
@@ -115,7 +115,7 @@ class _PermissionBridge:
         # interactive prompt. This is the only place that needs to know
         # about modes at all -- write_file/replace_in_file/run_command
         # all already route through request_permission, so nothing in
-        # agent.py or tools.py has to change.
+        # seacode.py or tools.py has to change.
         if self._app.mode == "scout":
             self._app.call_from_thread(
                 self._app.note_scouted_action, action
@@ -138,8 +138,8 @@ class _PermissionBridge:
 
 
 # -----------------------------------------------------------------------
-# line classification -- lightweight, read-only parsing of agent.py's
-# existing print() output. Nothing here changes agent.py's behavior.
+# line classification -- lightweight, read-only parsing of seacode.py's
+# existing print() output. Nothing here changes seacode.py's behavior.
 # -----------------------------------------------------------------------
 
 _MODIFICATION_SUCCESS_RE = re.compile(
@@ -184,8 +184,8 @@ def classify_line(line: str) -> str:
     return "default"
 
 
-class IggyApp(App):
-    """The Iggy TUI."""
+class SeaCodeApp(App):
+    """The SeaCode TUI."""
 
     CSS = """
     Screen {
@@ -310,11 +310,11 @@ class IggyApp(App):
 
     def __init__(self, model=None, max_tool_calls=None) -> None:
         super().__init__()
-        self.title = "Iggy"
-        self._model = model or agent_module.MODEL
+        self.title = "SeaCode"
+        self._model = model or seacode_module.MODEL
         self._max_tool_calls = max_tool_calls
         self.messages = [
-            {"role": "system", "content": agent_module.SYSTEM_PROMPT}
+            {"role": "system", "content": seacode_module.SYSTEM_PROMPT}
         ]
         self._permission_bridge = _PermissionBridge(self)
         self._permission_callback = None
@@ -340,7 +340,7 @@ class IggyApp(App):
         with Vertical(id="bottom-bar"):
             yield Static("", id="prompt-label", classes="hidden")
             yield Input(
-                placeholder="Ask Iggy to do something...",
+                placeholder="Ask SeaCode to do something...",
                 id="chat-input",
                 classes="hidden",
             )
@@ -351,8 +351,8 @@ class IggyApp(App):
     def on_mount(self) -> None:
         self.query_one("#diff-log", RichLog).border_title = "diff"
 
-        # Route agent/tools.py's permission checks through the TUI
-        # instead of the raw input() prompt agent.permissions uses by
+        # Route seacode/tools.py's permission checks through the TUI
+        # instead of the raw input() prompt seacode.permissions uses by
         # default. Only rebinds the name in the tools module, exactly
         # like the test suite's own patch.object(tools_module, ...).
         tools_module.request_permission = self._permission_bridge.request
@@ -365,7 +365,7 @@ class IggyApp(App):
 
         self.feed.write(
             Text(
-                "Iggy is ready. Type a message below and press Enter.",
+                "SeaCode is ready. Type a message below and press Enter.",
                 style="bold",
             )
         )
@@ -514,7 +514,7 @@ class IggyApp(App):
 
         try:
             with contextlib.redirect_stdout(bridge):
-                answer = agent_module.run_agent(
+                answer = seacode_module.run_agent(
                     self.messages,
                     model=self._model,
                     max_tool_calls=self._max_tool_calls,
@@ -535,13 +535,13 @@ class IggyApp(App):
         elif answer is None:
             self.feed.write(
                 Text(
-                    "\nIggy stopped without a final answer "
+                    "\nSeaCode stopped without a final answer "
                     "(see feed above for why).",
                     style="bold red",
                 )
             )
         else:
-            self.feed.write(Text(f"\nIggy: {answer}", style="bold green"))
+            self.feed.write(Text(f"\nSeaCode: {answer}", style="bold green"))
 
         self.query_one("#chat-input", Input).focus()
 
@@ -558,13 +558,13 @@ class IggyApp(App):
         self.maybe_show_diff(line)
 
     def _should_suppress(self, line: str) -> bool:
-        """Swallow agent.py's `Model raw response:` debug dump.
+        """Swallow seacode.py's `Model raw response:` debug dump.
 
         That print() emits a header line followed by the model's raw
         (often JSON) reply, which can span several lines with no
         internal blank line. We hide the whole block by suppressing
         everything from the header up to -- but not including -- the
-        next blank line, which is agent.py's own separator before its
+        next blank line, which is seacode.py's own separator before its
         next print() call.
         """
 
@@ -663,7 +663,7 @@ class IggyApp(App):
         self.awaiting_permission = True
 
         self.query_one("#prompt-label", Static).update(
-            f"Iggy needs permission to: {action}   [y/N]:"
+            f"SeaCode needs permission to: {action}   [y/N]:"
         )
 
         input_widget = self.query_one("#chat-input", Input)
@@ -681,11 +681,11 @@ class IggyApp(App):
         if awaiting:
             input_widget.placeholder = "y/N"
         else:
-            input_widget.placeholder = "Ask Iggy to do something..."
+            input_widget.placeholder = "Ask SeaCode to do something..."
 
 
 def main(model=None, max_tool_calls=None) -> None:
-    IggyApp(model=model, max_tool_calls=max_tool_calls).run()
+    SeaCodeApp(model=model, max_tool_calls=max_tool_calls).run()
 
 
 if __name__ == "__main__":

@@ -2,7 +2,7 @@
 Mocked tests for M7.9 -- unread-file edit guard.
 
 Same testing philosophy as M7.6/M7.7/M7.8: no real Ollama server, no
-real project directory (`agent.tools.get_project_root` is patched to a
+real project directory (`seacode.tools.get_project_root` is patched to a
 temp dir), model responses are scripted.
 
 Unlike M7.6/M7.7/M7.8, this is a pre-execution guard, not a post-hoc
@@ -42,8 +42,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import agent.agent as agent_module
-import agent.tools as tools_module
+import seacode.agent as seacode_module
+import seacode.tools as tools_module
 
 
 def fake_response(content: str):
@@ -94,7 +94,7 @@ class CheckUnreadFileEditUnitTests(unittest.TestCase):
     def test_blocks_existing_never_seen_file(self):
         self.make_file("app/config.py", "DEBUG = True\n")
 
-        message = agent_module.check_unread_file_edit(
+        message = seacode_module.check_unread_file_edit(
             "replace_in_file",
             {"path": "app/config.py", "old_text": "x", "new_text": "y"},
             set(),
@@ -107,7 +107,7 @@ class CheckUnreadFileEditUnitTests(unittest.TestCase):
     def test_allows_already_seen_file(self):
         self.make_file("app/config.py", "DEBUG = True\n")
 
-        message = agent_module.check_unread_file_edit(
+        message = seacode_module.check_unread_file_edit(
             "replace_in_file",
             {"path": "app/config.py", "old_text": "x", "new_text": "y"},
             {"app/config.py"},
@@ -116,7 +116,7 @@ class CheckUnreadFileEditUnitTests(unittest.TestCase):
         self.assertIsNone(message)
 
     def test_allows_new_file(self):
-        message = agent_module.check_unread_file_edit(
+        message = seacode_module.check_unread_file_edit(
             "write_file",
             {"path": "app/new_module.py", "content": "print('hi')"},
             set(),
@@ -125,7 +125,7 @@ class CheckUnreadFileEditUnitTests(unittest.TestCase):
         self.assertIsNone(message)
 
     def test_ignores_non_modification_tools(self):
-        message = agent_module.check_unread_file_edit(
+        message = seacode_module.check_unread_file_edit(
             "read_file",
             {"path": "app/config.py"},
             set(),
@@ -135,17 +135,17 @@ class CheckUnreadFileEditUnitTests(unittest.TestCase):
 
     def test_ignores_unusable_arguments(self):
         self.assertIsNone(
-            agent_module.check_unread_file_edit(
+            seacode_module.check_unread_file_edit(
                 "write_file", "not-a-dict", set()
             )
         )
         self.assertIsNone(
-            agent_module.check_unread_file_edit(
+            seacode_module.check_unread_file_edit(
                 "write_file", {"path": ""}, set()
             )
         )
         self.assertIsNone(
-            agent_module.check_unread_file_edit(
+            seacode_module.check_unread_file_edit(
                 "write_file", {"path": 123}, set()
             )
         )
@@ -176,12 +176,12 @@ class M79IntegrationTests(unittest.TestCase):
 
     def run_scripted(self, scripted_responses, user_request):
         chat = ScriptedChat(scripted_responses)
-        with patch.object(agent_module.client, "chat", side_effect=chat):
+        with patch.object(seacode_module.client, "chat", side_effect=chat):
             messages = [
-                {"role": "system", "content": agent_module.SYSTEM_PROMPT},
+                {"role": "system", "content": seacode_module.SYSTEM_PROMPT},
                 {"role": "user", "content": user_request},
             ]
-            answer = agent_module.run_agent(messages)
+            answer = seacode_module.run_agent(messages)
         return answer, messages, chat
 
     # -------------------------------------------------------------
