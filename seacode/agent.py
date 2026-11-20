@@ -3,12 +3,17 @@ import difflib
 import json
 import os
 import re
+import sys
 from pathlib import Path
 
 import ollama
 
+from seacode import __version__
+from seacode.permissions import get_trust_level
+from seacode.sessions import save_session
 from seacode.tools import (
     TOOLS,
+    get_project_root,
     list_files,
     read_file,
     remove_created_file,
@@ -517,6 +522,123 @@ def parse_action(raw_response: str) -> dict:
         raise ValueError("Model response must be a JSON object.")
 
     return action
+
+
+def extract_chunk_content(chunk) -> str:
+    """Pull the text delta out of one streamed chat chunk.
+
+    Accepts both the ollama client's object form (chunk.message.content)
+    and the plain-dict form, returning "" when a chunk carries no text
+    (e.g. the final done chunk).
+    """
+
+    message = getattr(chunk, "message", None)
+
+    if message is None and isinstance(chunk, dict):
+        message = chunk.get("message")
+
+    if message is None:
+        return ""
+
+    content = getattr(message, "content", None)
+
+    if content is None and isinstance(message, dict):
+        content = message.get("content")
+
+    return content or ""
+
+
+# -----------------------------------------------------------------------
+# Transcript output -- everything run_agent prints is plain text (no
+# ANSI codes): the TUI parses these exact formats to style its feed,
+# so any change here must update tui.py's classifier in lockstep.
+# Only run_repl's own header/prompt/answer prints use color, and only
+# on a tty without NO_COLOR set.
+# -----------------------------------------------------------------------
+
+MAX_RESULT_LINES = 8
+
+THINKING_TEXT = "⠋ thinking…"
+
+
+def _color_enabled() -> bool:
+    return sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
+
+
+def _paint(text: str, code: str) -> str:
+    if not _color_enabled():
+        return text
+    return f"\033[{code}m{text}\033[0m"
+
+
+def _bold(text: str) -> str:
+    return _paint(text, "1")
+
+
+def _dim(text: str) -> str:
+    return _paint(text, "2")
+
+
+def _cyan(text: str) -> str:
+    return _paint(text, "36")
+
+
+def _green(text: str) -> str:
+    return _paint(text, "32")
+
+
+def format_tool_call(tool_name: str, arguments) -> str:
+    """One-line `● tool target` summary for the transcript, where
+    target is the path/command/query being acted on, if any."""
+
+    target = ""
+
+    if isinstance(arguments, dict):
+        for key in ("path", "command", "query", "root"):
+            value = arguments.get(key)
+            if isinstance(value, str) and value:
+                target = value
+                break
+
+    line = f"● {tool_name}"
+
+    if target:
+        if len(target) > 70:
+            target = target[:67] + "..."
+        line += f" {target}"
+
+    return line
+
+
+def print_tool_result(result) -> None:
+    """Print a tool's result, dimmed by the caller contract: first
+    line marked ⎿, continuations indented, long output truncated."""
+
+    if isinstance(result, (dict, list)):
+        text = json.dumps(result, indent=2)
+    else:
+        text = str(result)
+
+    lines = text.splitlines() or [""]
+
+    for index, line in enumerate(lines[:MAX_RESULT_LINES]):
+        if index == 0:
+            print(f"  ⎿ {line}".rstrip())
+        else:
+            print(f"    {line}".rstrip())
+
+    hidden = len(lines) - MAX_RESULT_LINES
+
+    if hidden > 0:
+        print(f"  … (+{hidden} more lines)")
+
+
+def _thinking_start() -> None:
+    print(THINKING_TEXT, end="", flush=True)
+
+
+def _thinking_stop() -> None:
+    print("\r" + " " * len(THINKING_TEXT) + "\r", end="", flush=True)
 
 
 def normalize_tool_name(tool_name):
@@ -1249,12 +1371,27 @@ def check_unread_file_edit(
     )
 
 
-def run_agent(messages: list[dict], model=None, max_tool_calls=None):
+def run_agent(
+    messages: list[dict],
+    model=None,
+    max_tool_calls=None,
+    stream=False,
+    on_token=None,
+    show_thinking=False,
+    verbose=False,
+):
     """Run the agent until it produces a final answer.
 
     model and max_tool_calls override the import-time defaults
     (MODEL / MAX_TOOL_CALLS) for this run only; the CLI uses this
     to apply --model / --max-tools without touching globals.
+
+    With stream=True, model replies are read token by token, each
+    text delta passed to on_token as it arrives. With
+    show_thinking=True (and no on_token to show progress), a transient
+    spinner line covers the wait instead. The raw-response dump only
+    appears with verbose=True (--verbose); both frontends leave it
+    off since they already show the response live.
     """
 
     model = model or MODEL
@@ -1337,16 +1474,46 @@ def run_agent(messages: list[dict], model=None, max_tool_calls=None):
             last_user_request = message.get("content", "")
             break
 
+    thinking = show_thinking and sys.stdout.isatty()
+
     while tool_calls < tool_call_limit:
 
-        response = client.chat(
-            model=model,
-            messages=messages,
-        )
+        if thinking:
+            _thinking_start()
 
-        raw_response = response.message.content
+        try:
+            if stream:
+                chunks = client.chat(
+                    model=model,
+                    messages=messages,
+                    stream=True,
+                )
 
-        print(f"\nModel raw response:\n{raw_response}")
+                parts = []
+
+                for chunk in chunks:
+                    delta = extract_chunk_content(chunk)
+
+                    if delta:
+                        parts.append(delta)
+
+                        if on_token is not None:
+                            on_token(delta)
+
+                raw_response = "".join(parts)
+            else:
+                response = client.chat(
+                    model=model,
+                    messages=messages,
+                )
+
+                raw_response = response.message.content
+        finally:
+            if thinking:
+                _thinking_stop()
+
+        if verbose:
+            print(f"\nModel raw response:\n{raw_response}")
 
         try:
             action = parse_action(raw_response)
@@ -1689,8 +1856,7 @@ def run_agent(messages: list[dict], model=None, max_tool_calls=None):
 
         arguments = action.get("arguments", {})
 
-        print(f"\nTool requested: {tool_name}")
-        print(f"Arguments: {arguments}")
+        print(f"\n{format_tool_call(tool_name, arguments)}")
 
         # M7.9: before letting any modification tool touch an existing
         # file, check whether the model has actually read or searched
@@ -1786,8 +1952,10 @@ def run_agent(messages: list[dict], model=None, max_tool_calls=None):
                 "error": str(e)
             }
 
-        print("\nTool executed:")
-        print(result)
+        if isinstance(result, dict) and "error" in result:
+            print(f"  ✖ {result['error']}")
+        else:
+            print_tool_result(result)
 
         # M7.9: record that this path's real content has now been
         # exposed to the model this run, so a later modification
@@ -2022,25 +2190,72 @@ def run_agent(messages: list[dict], model=None, max_tool_calls=None):
     return None
 
 
-def run_repl(model=None, max_tool_calls=None):
+def run_repl(
+    model=None,
+    max_tool_calls=None,
+    stream=False,
+    on_token=None,
+    initial_messages=None,
+    session_id=None,
+    initial_turns=0,
+    verbose=False,
+):
 
     model = model or MODEL
+    turns = initial_turns
 
-    messages = [
-        {
-            "role": "system",
-            "content": SYSTEM_PROMPT,
-        }
-    ]
+    if initial_messages is not None:
+        messages = initial_messages
+    else:
+        messages = [
+            {
+                "role": "system",
+                "content": SYSTEM_PROMPT,
+            }
+        ]
 
-    print("SeaCode")
-    print(f"Model: {model}")
-    print("----------------------------------------")
-    print("Type 'quit' to exit.")
+    # Without a token callback the model replies accumulate silently;
+    # the thinking indicator covers the wait instead of a raw JSON dump.
+    show_thinking = on_token is None
+
+    def persist():
+        nonlocal session_id
+
+        try:
+            session_id = save_session(
+                get_project_root(),
+                messages,
+                model,
+                session_id,
+                turns,
+            )
+        except Exception as e:
+            print(f"\nWarning: could not save session: {e}")
+
+        return session_id
+
+    header = (
+        f"{_bold(f'SeaCode {__version__}')} {_dim('·')} {_cyan(model)} "
+        f"{_dim('·')} {_dim(str(get_project_root()))}"
+    )
+
+    if session_id is not None:
+        header += f" {_dim('·')} {_dim(f'session {session_id}')}"
+
+    try:
+        trust = get_trust_level()
+    except ValueError:
+        trust = "ask"
+
+    if trust != "ask":
+        header += f" {_dim('·')} {_dim(f'trust:{trust}')}"
+
+    print(header)
+    print(_dim("Type 'quit' to exit."))
 
     while True:
 
-        user_input = input("\nYou: ").strip()
+        user_input = input(f"\n{_cyan('❯')} ").strip()
 
         if user_input.lower() == "quit":
             break
@@ -2053,14 +2268,23 @@ def run_repl(model=None, max_tool_calls=None):
             "content": user_input,
         })
 
+        turns += 1
+        persist()
+
         answer = run_agent(
             messages,
             model=model,
             max_tool_calls=max_tool_calls,
+            stream=stream,
+            on_token=on_token,
+            show_thinking=show_thinking,
+            verbose=verbose,
         )
 
+        persist()
+
         if answer is not None:
-            print(f"\nSeaCode: {answer}")
+            print(f"\n{_green('●')} {answer}")
 
 
 def main():
