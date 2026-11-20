@@ -4,7 +4,7 @@ splash-screen look: a blocky wordmark and a centered rounded input up
 front, which hands off to a live feed + diff view once a conversation
 actually starts, with a slim status bar pinned to the bottom throughout.
 
-Design choice (per project discussion): seacode.py's run_agent() keeps
+Design choice (per project discussion): seacode/agent.py's run_agent() keeps
 its existing print()-based logging exactly as-is -- no refactor to
 structured events. This app runs run_agent() in a background thread,
 redirects stdout into itself so every line lands in the live feed as

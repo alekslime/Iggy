@@ -20,4 +20,4 @@ dev = ["pytest>=9.2"]
 seacode = "seacode.cli:main"
 
 [tool.setuptools]
-packages = ["agent"]
+packages = ["seacode"]
