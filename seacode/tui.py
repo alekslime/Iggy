@@ -926,6 +926,9 @@ class SeaCodeApp(App):
         breathe the mascot color, and drift the sea strips. Content
         only -- never moves layout."""
 
+        if not self.is_running:
+            return
+
         self._art_phase += 1
         self.query_one("#splash-rule", Static).update(
             dither_rule(64, self._art_phase)
@@ -955,6 +958,9 @@ class SeaCodeApp(App):
         if self._art_timer is not None:
             self._art_timer.stop()
             self._art_timer = None
+
+    def on_unmount(self) -> None:
+        self._stop_art()
 
     def watch_chatting(self, chatting: bool) -> None:
         self.query_one("#splash", Vertical).set_class(chatting, "hidden")
