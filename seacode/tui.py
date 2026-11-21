@@ -40,6 +40,7 @@ import difflib
 import random
 import re
 import threading
+import time
 
 from rich.markdown import Markdown
 from rich.text import Text
@@ -1087,6 +1088,7 @@ class SeaCodeApp(App):
     def run_agent_turn(self, user_text: str) -> None:
         bridge = _ThreadedStdoutBridge(self)
         tokens = _TokenLineBuffer(self)
+        started = time.monotonic()
 
         def on_token(delta: str) -> None:
             tokens.push(delta)
@@ -1108,7 +1110,10 @@ class SeaCodeApp(App):
 
         bridge.drain()
         tokens.drain()
-        self.call_from_thread(self.on_turn_complete, answer, None)
+        elapsed = seacode_module.format_duration(
+            time.monotonic() - started
+        )
+        self.call_from_thread(self.on_turn_complete, answer, None, elapsed)
 
     def persist_session(self) -> None:
         try:
@@ -1130,7 +1135,9 @@ class SeaCodeApp(App):
 
         self._apply_status_bar()
 
-    def on_turn_complete(self, answer, error: str | None) -> None:
+    def on_turn_complete(
+        self, answer, error: str | None, elapsed: str = ""
+    ) -> None:
         self.turn_running = False
 
         if error is not None:
@@ -1144,7 +1151,12 @@ class SeaCodeApp(App):
                 )
             )
         else:
-            self.feed.write(Text("\n● SeaCode", style="bold green"))
+            label = Text("\n● SeaCode", style="bold green")
+
+            if elapsed:
+                label.append(f" ({elapsed})", style="grey50")
+
+            self.feed.write(label)
             self.write_answer(answer)
 
         self.persist_session()
