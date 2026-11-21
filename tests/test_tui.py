@@ -25,6 +25,7 @@ from seacode.tui import (
     max_recents_for_height,
     parse_slash_command,
 )
+from textual.containers import Horizontal
 from textual.widgets import Input, RichLog, Static
 
 
@@ -131,15 +132,15 @@ class SplashFitTests(unittest.TestCase):
     """The wordmark always shows; tall terminals add the mascot above
     it, swapping live on resize."""
 
-    def displayed(self, app, widget_id):
-        return app.query_one(widget_id, Static).display
+    def displayed(self, app, widget_id, widget_cls=Static):
+        return app.query_one(widget_id, widget_cls).display
 
     def test_short_terminal_gets_wordmark_only(self):
         async def run():
             app = SeaCodeApp()
             async with app.run_test(size=(80, 24)) as pilot:
                 await pilot.pause()
-                self.assertFalse(self.displayed(app, "#mascot"))
+                self.assertFalse(self.displayed(app, "#splash-top", Horizontal))
                 self.assertTrue(self.displayed(app, "#logo"))
 
         asyncio.run(run())
@@ -149,7 +150,7 @@ class SplashFitTests(unittest.TestCase):
             app = SeaCodeApp()
             async with app.run_test(size=(80, 40)) as pilot:
                 await pilot.pause()
-                self.assertFalse(self.displayed(app, "#mascot"))
+                self.assertFalse(self.displayed(app, "#splash-top", Horizontal))
                 self.assertTrue(self.displayed(app, "#logo"))
 
         asyncio.run(run())
@@ -159,7 +160,7 @@ class SplashFitTests(unittest.TestCase):
             app = SeaCodeApp()
             async with app.run_test(size=(80, 50)) as pilot:
                 await pilot.pause()
-                self.assertTrue(self.displayed(app, "#mascot"))
+                self.assertTrue(self.displayed(app, "#splash-top", Horizontal))
                 self.assertTrue(self.displayed(app, "#logo"))
 
         asyncio.run(run())
@@ -169,7 +170,7 @@ class SplashFitTests(unittest.TestCase):
             app = SeaCodeApp()
             async with app.run_test(size=(80, 44)) as pilot:
                 await pilot.pause()
-                self.assertFalse(self.displayed(app, "#mascot"))
+                self.assertFalse(self.displayed(app, "#splash-top", Horizontal))
                 self.assertTrue(self.displayed(app, "#logo"))
 
         asyncio.run(run())
@@ -191,11 +192,11 @@ class SplashFitTests(unittest.TestCase):
             app = SeaCodeApp()
             async with app.run_test(size=(80, 24)) as pilot:
                 await pilot.pause()
-                self.assertFalse(self.displayed(app, "#mascot"))
+                self.assertFalse(self.displayed(app, "#splash-top", Horizontal))
 
                 await pilot.resize_terminal(80, 50)
                 await pilot.pause()
-                self.assertTrue(self.displayed(app, "#mascot"))
+                self.assertTrue(self.displayed(app, "#splash-top", Horizontal))
                 self.assertTrue(self.displayed(app, "#logo"))
 
         asyncio.run(run())
@@ -258,10 +259,26 @@ class SplashAnimationTests(unittest.TestCase):
                 app._stop_art()
                 phase = app._art_phase
                 before = self.rule_text(app)
+                seas_before = [
+                    str(
+                        app.query_one(widget_id, Static).render()
+                    )
+                    for widget_id in ("#sea-left", "#sea-right")
+                ]
                 app._tick_art()
                 await pilot.pause()
                 self.assertEqual(app._art_phase, phase + 1)
                 self.assertNotEqual(self.rule_text(app), before)
+
+                for widget_id, previous in zip(
+                    ("#sea-left", "#sea-right"), seas_before
+                ):
+                    self.assertNotEqual(
+                        str(
+                            app.query_one(widget_id, Static).render()
+                        ),
+                        previous,
+                    )
 
         asyncio.run(run())
 

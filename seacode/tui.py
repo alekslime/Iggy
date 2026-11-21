@@ -55,7 +55,7 @@ import seacode.sessions as sessions_module
 import seacode.tools as tools_module
 from seacode import __version__ as VERSION
 from seacode import permissions as permissions_module
-from seacode.art import MASCOT, dither_rule
+from seacode.art import MASCOT, dither_rule, side_column
 
 LOGO = (
     "█▀▀█ ▀█▀▀█   ▀▀▄  █▀▀█ █▀▀█ ▀█▀▀█ ▀█▀▀█\n"
@@ -320,12 +320,24 @@ class SeaCodeApp(App):
         height: 1fr;
         align: center middle;
     }
+    #splash-top {
+        width: 1fr;
+        height: auto;
+        margin-bottom: 1;
+    }
+    #sea-left, #sea-right {
+        width: 1fr;
+        color: #2e6b85;
+    }
+    #splash-mascot {
+        width: auto;
+        height: auto;
+    }
     #mascot {
         width: auto;
         height: auto;
         color: #4caf78;
         text-align: left;
-        margin-bottom: 1;
     }
     #logo {
         width: auto;
@@ -489,8 +501,11 @@ class SeaCodeApp(App):
         # Center-wrapped rows with direct ones strands the direct rows
         # at x=0 on wide terminals. Uniform Centers center every row.
         with Vertical(id="splash"):
-            with Center():
-                yield Static(MASCOT, id="mascot")
+            with Horizontal(id="splash-top"):
+                yield Static("", id="sea-left")
+                with Vertical(id="splash-mascot"):
+                    yield Static(MASCOT, id="mascot")
+                yield Static("", id="sea-right")
             with Center():
                 yield Static(LOGO, id="logo")
             with Center():
@@ -567,6 +582,7 @@ class SeaCodeApp(App):
         # Sizes aren't final until after first layout, so re-check
         # once everything has been measured.
         self.call_after_refresh(self._fit_splash_vertical)
+        self.call_after_refresh(self._tick_art)
 
         if self._animate and not self.chatting:
             self._art_timer = self.set_interval(
@@ -708,14 +724,17 @@ class SeaCodeApp(App):
         self._fit_splash_vertical()
 
     def _fit_splash(self, height=None) -> None:
-        """Show the mascot above the wordmark when it fits; the
-        wordmark itself always shows."""
+        """Show the mascot row (seahorse between animated sea strips)
+        above the wordmark when it fits; the wordmark itself always
+        shows."""
 
         if height is None:
             height = self.size.height
 
         tall = height >= MASCOT_MIN_HEIGHT
-        self.query_one("#mascot", Static).set_class(not tall, "hidden")
+        self.query_one("#splash-top", Horizontal).set_class(
+            not tall, "hidden"
+        )
         self.query_one("#logo", Static).remove_class("hidden")
 
     @property
@@ -903,8 +922,9 @@ class SeaCodeApp(App):
     # -------------------------------------------------------------
 
     def _tick_art(self) -> None:
-        """Advance one splash animation frame: shimmer the dither rule
-        and breathe the mascot color. Never moves layout."""
+        """Advance one splash animation frame: shimmer the dither rule,
+        breathe the mascot color, and drift the sea strips. Content
+        only -- never moves layout."""
 
         self._art_phase += 1
         self.query_one("#splash-rule", Static).update(
@@ -913,6 +933,23 @@ class SeaCodeApp(App):
         self.query_one("#mascot", Static).styles.color = MASCOT_PULSE[
             self._art_phase % len(MASCOT_PULSE)
         ]
+
+        height = len(MASCOT.splitlines())
+
+        for widget_id, seed, direction in (
+            ("#sea-left", 0, 1),
+            ("#sea-right", 3, -1),
+        ):
+            strip = self.query_one(widget_id, Static)
+            strip.update(
+                side_column(
+                    max(strip.size.width, 1),
+                    height,
+                    self._art_phase,
+                    seed,
+                    direction,
+                )
+            )
 
     def _stop_art(self) -> None:
         if self._art_timer is not None:
