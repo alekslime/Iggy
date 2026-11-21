@@ -215,5 +215,35 @@ class RunPrintsTests(unittest.TestCase):
         self.assertIn("Model raw response", loud)
 
 
+class FormatDurationTests(unittest.TestCase):
+
+    def test_seconds(self):
+        self.assertEqual(seacode_module.format_duration(3.7), "3s")
+        self.assertEqual(seacode_module.format_duration(0), "0s")
+
+    def test_minutes(self):
+        self.assertEqual(seacode_module.format_duration(61.7), "1m01s")
+        self.assertEqual(seacode_module.format_duration(600), "10m00s")
+
+
+class ThinkingSpinnerTests(unittest.TestCase):
+
+    def test_disabled_off_tty(self):
+        # pytest captures stdout: not a tty, so the spinner must stay
+        # silent and never start a thread.
+        spinner = seacode_module._ThinkingSpinner(True)
+
+        self.assertFalse(spinner.enabled)
+
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            with spinner:
+                pass
+
+        self.assertEqual(output.getvalue(), "")
+        self.assertIsNone(spinner._thread)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,12 +1,17 @@
 import ast
 import difflib
+import itertools
 import json
 import os
 import re
 import sys
+import threading
+import time
 from pathlib import Path
 
 import ollama
+from rich.console import Console
+from rich.markdown import Markdown
 
 from seacode import __version__
 from seacode.permissions import get_trust_level
@@ -558,7 +563,9 @@ def extract_chunk_content(chunk) -> str:
 
 MAX_RESULT_LINES = 8
 
-THINKING_TEXT = "⠋ thinking…"
+SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+SPINNER_TEXT = " thinking…"
+SPINNER_INTERVAL = 0.08
 
 
 def _color_enabled() -> bool:
@@ -633,12 +640,54 @@ def print_tool_result(result) -> None:
         print(f"  … (+{hidden} more lines)")
 
 
-def _thinking_start() -> None:
-    print(THINKING_TEXT, end="", flush=True)
+def format_duration(seconds: float) -> str:
+    """Compact turn duration: "3s", "1m02s"."""
+
+    total = max(int(seconds), 0)
+    minutes, secs = divmod(total, 60)
+
+    if minutes:
+        return f"{minutes}m{secs:02d}s"
+
+    return f"{secs}s"
 
 
-def _thinking_stop() -> None:
-    print("\r" + " " * len(THINKING_TEXT) + "\r", end="", flush=True)
+class _ThinkingSpinner:
+    """Transient braille spinner while the model thinks. Active only
+    on a tty; everywhere else (pipes, tests) it's a silent no-op."""
+
+    def __init__(self, enabled: bool):
+        self.enabled = enabled and sys.stdout.isatty()
+        self._stop = threading.Event()
+        self._thread = None
+
+    def __enter__(self):
+        if not self.enabled:
+            return self
+
+        self._thread = threading.Thread(
+            target=self._spin, daemon=True
+        )
+        self._thread.start()
+
+        return self
+
+    def _spin(self) -> None:
+        for frame in itertools.cycle(SPINNER_FRAMES):
+            if self._stop.wait(SPINNER_INTERVAL):
+                break
+            print(f"\r{frame}{SPINNER_TEXT}", end="", flush=True)
+
+    def __exit__(self, *exc_info) -> bool:
+        if not self.enabled:
+            return False
+
+        self._stop.set()
+        self._thread.join(timeout=1.0)
+        width = len(SPINNER_FRAMES[0] + SPINNER_TEXT)
+        print("\r" + " " * width + "\r", end="", flush=True)
+
+        return False
 
 
 def normalize_tool_name(tool_name):
@@ -1474,14 +1523,9 @@ def run_agent(
             last_user_request = message.get("content", "")
             break
 
-    thinking = show_thinking and sys.stdout.isatty()
-
     while tool_calls < tool_call_limit:
 
-        if thinking:
-            _thinking_start()
-
-        try:
+        with _ThinkingSpinner(show_thinking):
             if stream:
                 chunks = client.chat(
                     model=model,
@@ -1508,9 +1552,6 @@ def run_agent(
                 )
 
                 raw_response = response.message.content
-        finally:
-            if thinking:
-                _thinking_stop()
 
         if verbose:
             print(f"\nModel raw response:\n{raw_response}")
@@ -2253,6 +2294,8 @@ def run_repl(
     print(header)
     print(_dim("Type 'quit' to exit."))
 
+    console = Console()
+
     while True:
 
         user_input = input(f"\n{_cyan('❯')} ").strip()
@@ -2271,6 +2314,8 @@ def run_repl(
         turns += 1
         persist()
 
+        started = time.monotonic()
+
         answer = run_agent(
             messages,
             model=model,
@@ -2281,10 +2326,17 @@ def run_repl(
             verbose=verbose,
         )
 
+        elapsed = format_duration(time.monotonic() - started)
+
         persist()
 
         if answer is not None:
-            print(f"\n{_green('●')} {answer}")
+            print(f"\n{_green('●')} {_dim(f'({elapsed})')}")
+
+            try:
+                console.print(Markdown(answer))
+            except Exception:
+                print(answer)
 
 
 def main():
