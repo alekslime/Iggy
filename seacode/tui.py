@@ -998,16 +998,23 @@ class SeaCodeApp(App):
         status = self.query_one("#splash-status", Static)
         status.update(self._status_pills())
 
+    PILL_BG = "#1a2332"
+
     def _status_pills(self) -> Text:
         pills = Text()
-        pills.append(self._model, style="bold #7dd3fc")
-        pills.append("    ")
-        pills.append(
-            self.MODE_LABELS[self.mode],
-            style=f"bold {self.MODE_COLORS[self.mode]}",
-        )
-        pills.append("    ")
-        pills.append(self._project_name, style="bold #d0d5db")
+
+        for text, color in (
+            (self._model, "#7dd3fc"),
+            (self.MODE_LABELS[self.mode], self.MODE_COLORS[self.mode]),
+            (self._project_name, "#d0d5db"),
+        ):
+            pills.append("  ")
+            pills.append(
+                f" {text} ", style=f"bold {color} on {self.PILL_BG}"
+            )
+
+        pills.append("  ")
+
         return pills
 
     def _apply_status_bar(self) -> None:
