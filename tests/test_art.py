@@ -11,7 +11,7 @@ Run with:  python3 -m pytest tests/test_art.py -v
 
 import unittest
 
-from seacode.art import MASCOT, dither_rule
+from seacode.art import MASCOT, dither_rule, side_column
 
 
 class MascotTests(unittest.TestCase):
@@ -65,6 +65,49 @@ class DitherRuleTests(unittest.TestCase):
         for phase in range(8):
             rule = dither_rule(64, phase)
             self.assertEqual(rule, rule[::-1])
+
+
+class SideColumnTests(unittest.TestCase):
+
+    def test_exact_dimensions(self):
+        frame = side_column(30, 25, phase=0).splitlines()
+
+        self.assertEqual(len(frame), 25)
+
+        for row in frame:
+            self.assertLessEqual(len(row), 30)
+
+    def test_deterministic_per_phase(self):
+        self.assertEqual(
+            side_column(30, 25, phase=4),
+            side_column(30, 25, phase=4),
+        )
+        self.assertNotEqual(
+            side_column(30, 25, phase=4),
+            side_column(30, 25, phase=5),
+        )
+
+    def test_seed_and_direction_vary_output(self):
+        base = side_column(30, 25, phase=0, seed=0, direction=1)
+
+        self.assertNotEqual(
+            side_column(30, 25, phase=0, seed=3, direction=1), base
+        )
+        self.assertNotEqual(
+            side_column(30, 25, phase=0, seed=0, direction=-1), base
+        )
+
+    def test_tiny_sizes_dont_crash(self):
+        frame = side_column(1, 1, phase=0).splitlines()
+
+        self.assertEqual(len(frame), 1)
+
+    def test_fish_swim_across(self):
+        frames = [
+            side_column(30, 25, phase=phase) for phase in (0, 20, 40)
+        ]
+
+        self.assertEqual(len(set(frames)), 3)
 
 
 if __name__ == "__main__":

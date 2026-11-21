@@ -66,3 +66,47 @@ def dither_rule(width: int, phase: int = 0) -> str:
         chars.append(SHADES[min(base, 3)])
 
     return "".join(chars)
+
+
+FISH_RIGHT = ("><>", "><")
+FISH_LEFT = ("<><", "<>")
+
+
+def side_column(width: int, height: int, phase: int = 0, seed: int = 0,
+                direction: int = 1) -> str:
+    """One animated sea strip: bubbles rising through lanes plus fish
+    drifting across. Pure function of (x, y, phase): same inputs give
+    the same frame, so animation is just repaints over time."""
+
+    width = max(int(width), 1)
+    height = max(int(height), 1)
+
+    grid = [[" "] * width for _ in range(height)]
+
+    lanes = max(2, width // 6)
+
+    for i in range(lanes):
+        x = (seed * 11 + i * 17) % width
+        speed = 1 + (i % 2)
+        y = (height - 1 - (phase * speed + i * 7 + seed * 3)) % height
+        grid[y][x] = (".", "o", "°")[i % 3]
+
+    fishes = FISH_RIGHT if direction > 0 else FISH_LEFT
+
+    for i, glyph in enumerate(fishes):
+        y = (height * (i + 1)) // (len(fishes) + 1)
+        span = width + len(glyph) + 4
+        pos = (phase * (1 + i) + seed * 5 + i * 11) % span
+
+        if direction > 0:
+            x = pos - len(glyph) - 2
+        else:
+            x = width + 2 - pos
+
+        for j, char in enumerate(glyph):
+            xx = x + j
+
+            if 0 <= xx < width:
+                grid[y][xx] = char
+
+    return "\n".join("".join(row).rstrip() for row in grid)
