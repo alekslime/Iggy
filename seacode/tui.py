@@ -399,6 +399,9 @@ class SeaCodeApp(App):
         height: 1fr;
         border: solid #3a4152;
         background: #0b0e14;
+        scrollbar-color: #3a4152;
+        scrollbar-color-hover: #7dd3fc;
+        scrollbar-background: #0b0e14;
     }
     #prompt-label {
         height: auto;
