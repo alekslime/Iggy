@@ -128,6 +128,12 @@ class SideColumnTests(unittest.TestCase):
 
         self.assertEqual(len(set(frames)), 3)
 
+    def test_no_letter_o_artifacts_and_has_waves(self):
+        frame = side_column(40, 25, phase=0)
+        self.assertNotIn("o", frame)
+        self.assertNotIn("0", frame)
+        self.assertTrue("~" in frame or "≈" in frame)
+
 
 if __name__ == "__main__":
     unittest.main()
