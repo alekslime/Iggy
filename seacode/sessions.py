@@ -20,7 +20,7 @@ SESSIONS_DIR_NAME = ".seacode_sessions"
 
 SESSION_VERSION = 1
 
-VALID_ROLES = ("system", "user", "assistant")
+VALID_ROLES = ("system", "user", "assistant", "tool")
 
 
 def sessions_dir(project_root) -> Path:

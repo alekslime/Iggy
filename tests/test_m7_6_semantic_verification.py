@@ -91,7 +91,7 @@ class ScriptedChat:
         self._responses = list(scripted_responses)
         self.calls = []
 
-    def __call__(self, model, messages):
+    def __call__(self, model, messages, **kwargs):
         self.calls.append([dict(m) for m in messages])
         if not self._responses:
             raise AssertionError(
@@ -380,7 +380,10 @@ class M76TestCase(unittest.TestCase):
         user_request = "List the project files."
 
         scripted = [
-            "this is not valid json at all",
+            # Under the native tool-calling protocol, plain prose is a
+            # legitimate final answer, so M7.5 malformed-output
+            # recovery is exercised with JSON-shaped garbage instead.
+            "{this is not valid json",
             tool_call("list_files", root="."),
             final_answer("Here are the files."),
         ]

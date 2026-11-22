@@ -37,7 +37,7 @@ class RecordingChat:
         self._responses = list(scripted_responses)
         self.models = []
 
-    def __call__(self, model, messages):
+    def __call__(self, model, messages, **kwargs):
         self.models.append(model)
         if not self._responses:
             raise AssertionError(

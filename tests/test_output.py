@@ -47,7 +47,7 @@ class ScriptedChat:
     def __init__(self, scripted_responses):
         self._responses = list(scripted_responses)
 
-    def __call__(self, model, messages):
+    def __call__(self, model, messages, **kwargs):
         if not self._responses:
             raise AssertionError(
                 "ScriptedChat ran out of scripted responses."

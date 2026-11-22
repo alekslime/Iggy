@@ -59,7 +59,7 @@ class StreamChat:
         self._turns = [list(turn) for turn in scripted_turns]
         self.calls = []
 
-    def __call__(self, model, messages, stream=False):
+    def __call__(self, model, messages, stream=False, **kwargs):
         self.calls.append({
             "model": model,
             "stream": stream,
