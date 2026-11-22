@@ -578,7 +578,7 @@ class SeaCodeApp(App):
         if initial_messages is not None:
             self.messages = context_module.fresh_messages(
                 initial_messages,
-                seacode_module.SYSTEM_PROMPT,
+                seacode_module.system_prompt_for_model(self._model),
                 tools_module.get_project_root(),
             )
         else:
@@ -586,7 +586,9 @@ class SeaCodeApp(App):
                 {
                     "role": "system",
                     "content": context_module.build_system_prompt(
-                        seacode_module.SYSTEM_PROMPT,
+                        seacode_module.system_prompt_for_model(
+                            self._model
+                        ),
                         tools_module.get_project_root(),
                     ),
                 }
@@ -929,7 +931,7 @@ class SeaCodeApp(App):
 
         self.messages = context_module.fresh_messages(
             session["messages"],
-            seacode_module.SYSTEM_PROMPT,
+            seacode_module.system_prompt_for_model(self._model),
             tools_module.get_project_root(),
         )
         self._session_id = session["id"]

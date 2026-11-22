@@ -1,6 +1,7 @@
 import itertools
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -375,6 +376,63 @@ Only report what actually happened.
 """
 
 
+SYSTEM_PROMPT_SMALL = """
+You are SeaCode, a coding agent working inside one project directory.
+
+ACT on requests to inspect, create, change, fix, or test something.
+Never just describe a plan, and never claim you did something you did
+not do.
+
+Make exactly one tool call per reply. If native tool calling is not
+available, reply with ONLY this JSON and nothing else:
+{"name": "tool_name", "arguments": {"argument": "value"}}
+When completely finished, reply in plain prose with no JSON.
+
+Tools: list_files(root), read_file(path), search_files(query),
+git_status(), run_command(command),
+write_file(path, content), replace_in_file(path, old_text, new_text),
+delete_file(path), undo_last_change(path), task(prompt).
+
+Rules:
+- Read a file before modifying it. Prefer replace_in_file for edits;
+  old_text must match exactly once.
+- Make the smallest change that completes the request. Do not touch
+  files the request did not mention.
+- Never access files outside the project. Never invent paths or tools.
+- After a modification, verify it if you can (read it back or run a
+  relevant command). Never claim verification you did not perform.
+- If a tool fails, read the error, fix your arguments, and retry.
+- A message saying your last edit passed SeaCode verification means
+  the task is done: give your final answer and call no more tools.
+"""
+
+
+def model_size_billions(model) -> float | None:
+    """Parameter size parsed from a model tag ("qwen2.5-coder:7b" ->
+    7.0, "llama3.2" -> None)."""
+
+    if not isinstance(model, str):
+        return None
+
+    match = re.search(r"(\d+(?:\.\d+)?)\s*b\b", model.lower())
+
+    return float(match.group(1)) if match else None
+
+
+def system_prompt_for_model(model=None) -> str:
+    """The full system prompt, or the compact profile for models of
+    7B or smaller: a third of the prefill, and short instructions
+    that small models follow measurably better. Unknown sizes get
+    the full prompt."""
+
+    size = model_size_billions(model or MODEL)
+
+    if size is not None and size <= 7:
+        return SYSTEM_PROMPT_SMALL
+
+    return SYSTEM_PROMPT
+
+
 TASK_TOOL_SCHEMA = {
     "type": "function",
     "function": {
@@ -470,7 +528,9 @@ def _run_subagent_task(arguments: dict):
         {
             "role": "system",
             "content": (
-                SYSTEM_PROMPT
+                system_prompt_for_model(
+                    getattr(_agent_state, "model", None)
+                )
                 + "\n\nYou are a subagent handling one delegated "
                 "subtask. Work independently, then give a concise "
                 "final summary of what you found or did, including "
@@ -2061,14 +2121,16 @@ def run_repl(
         # Refresh the system message so current project instructions
         # (SEACODE.md/AGENTS.md/CLAUDE.md) apply to resumed sessions.
         messages = fresh_messages(
-            initial_messages, SYSTEM_PROMPT, get_project_root()
+            initial_messages,
+            system_prompt_for_model(model),
+            get_project_root(),
         )
     else:
         messages = [
             {
                 "role": "system",
                 "content": build_system_prompt(
-                    SYSTEM_PROMPT, get_project_root()
+                    system_prompt_for_model(model), get_project_root()
                 ),
             }
         ]
