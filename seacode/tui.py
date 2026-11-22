@@ -690,6 +690,13 @@ class SeaCodeApp(App):
                 style="grey50",
             )
         )
+        self.feed.write(
+            Text(
+                "Try:  explore this project  ·  explain how the agent "
+                "loop works  ·  run the tests and fix any failures",
+                style="#7a8494",
+            )
+        )
 
         self._populate_splash_extras()
         self._fit_splash_vertical()

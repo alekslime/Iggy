@@ -227,6 +227,21 @@ class SplashFitTests(unittest.TestCase):
         asyncio.run(run())
 
 
+class EmptyChatStateTests(unittest.TestCase):
+
+    def test_feed_offers_examples(self):
+        async def run():
+            app = SeaCodeApp()
+            async with app.run_test(size=(80, 30)) as pilot:
+                await pilot.pause()
+                app.chatting = True
+                await pilot.pause()
+                texts = [str(line.text) for line in app.feed.lines]
+                self.assertTrue(any("Try:" in t for t in texts))
+
+        asyncio.run(run())
+
+
 class SidebarTests(unittest.TestCase):
 
     def test_sidebar_only_on_wide_chat(self):
