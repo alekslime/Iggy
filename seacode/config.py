@@ -4,7 +4,9 @@ A project root may contain an `seacode.toml` with an `[seacode]` table:
 
     [seacode]
     model = "qwen2.5-coder:3b"
+    provider = "ollama"    # ollama | openai (any OpenAI-compatible API)
     host = "http://127.0.0.1:11434"
+    api_key = "..."        # for provider = "openai" (prefer SEACODE_API_KEY)
     max_tools = 10
     trust = "ask"          # ask | edits | all
     extra_commands = []    # appended to the run_command allowlist
@@ -25,8 +27,11 @@ CONFIG_TABLE = "seacode"
 
 KNOWN_KEYS = (
     "model",
+    "provider",
     "host",
+    "api_key",
     "max_tools",
+    "context_tokens",
     "trust",
     "extra_commands",
 )
@@ -37,10 +42,17 @@ DEFAULT_CONFIG_TEXT = """\
 
 [seacode]
 # model = "qwen2.5-coder:3b"
+# provider = "ollama"  # ollama | openai (OpenAI/OpenRouter/vLLM/LM Studio/...)
 # host = "http://127.0.0.1:11434"
+# api_key = "..."  # only for provider = "openai"; prefer $SEACODE_API_KEY
 # max_tools = 10
+# context_tokens = 16000  # wire budget; older history is trimmed, not lost
 # trust = "ask"  # ask | edits | all
 # extra_commands = []  # appended to the run_command allowlist
+
+# [hooks]
+# pre_tool = []   # commands; a non-zero exit blocks the tool call
+# post_tool = []  # commands; failures only warn
 """
 
 
