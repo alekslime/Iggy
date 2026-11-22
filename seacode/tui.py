@@ -464,6 +464,8 @@ class SeaCodeApp(App):
         padding: 0 1;
         color: $warning;
         text-style: bold;
+        background: #2a2118;
+        border-left: thick $warning;
     }
 
     /* ---------------- bottom chrome ---------------- */
@@ -1493,8 +1495,21 @@ class SeaCodeApp(App):
         if diff:
             self.show_permission_diff(diff)
 
+        stats = ""
+
+        if diff:
+            added = sum(
+                1 for line in diff.splitlines()
+                if line.startswith("+") and not line.startswith("+++")
+            )
+            removed = sum(
+                1 for line in diff.splitlines()
+                if line.startswith("-") and not line.startswith("---")
+            )
+            stats = f" (+{added}/-{removed})"
+
         self.query_one("#prompt-label", Static).update(
-            f"SeaCode needs permission to: {action}   [y/N]:"
+            f"SeaCode needs permission to: {action}{stats}   [y/N]:"
         )
 
         input_widget = self.query_one("#chat-input", Input)

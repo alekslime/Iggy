@@ -226,6 +226,35 @@ class SplashFitTests(unittest.TestCase):
         asyncio.run(run())
 
 
+class PermissionCardTests(unittest.TestCase):
+
+    def test_prompt_label_includes_diff_stats(self):
+        async def run():
+            app = SeaCodeApp()
+            async with app.run_test(size=(80, 30)) as pilot:
+                await pilot.pause()
+                app.chatting = True
+                await pilot.pause()
+                labelled = []
+
+                def capture(action, cb, diff=None):
+                    labelled.append((action, diff))
+
+                app.show_permission_prompt(
+                    "modify file: a.py",
+                    lambda approved: None,
+                    diff="--- a/a.py\n+++ b/a.py\n-old\n+new\n+more\n",
+                )
+                await pilot.pause()
+                label = str(
+                    app.query_one("#prompt-label", Static).render()
+                )
+                self.assertIn("modify file: a.py", label)
+                self.assertIn("(+2/-1)", label)
+
+        asyncio.run(run())
+
+
 class ToolBlockTests(unittest.TestCase):
     """Tool calls open a ruled block in the feed."""
 
