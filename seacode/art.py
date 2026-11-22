@@ -136,6 +136,11 @@ def side_column(width: int, height: int, phase: int = 0, seed: int = 0,
             offset = phase * (layer + 1) + seed * 4
 
             for x in range(width):
+                # Sparse crests, not a solid row: most cells stay
+                # water, a glyph lands every few columns.
+                if (x + offset) % 4 != 0:
+                    continue
+
                 y = base_y + ((x // 5 + layer) % 2)
 
                 if 0 <= y < height and grid[y][x] == " ":

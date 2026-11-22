@@ -489,6 +489,8 @@ class SeaCodeApp(App):
         padding: 0 1;
         color: $warning;
         text-style: bold;
+    }
+    #prompt-label.active {
         background: #2a2118;
         border-left: thick $warning;
     }
@@ -942,7 +944,9 @@ class SeaCodeApp(App):
         approved = value.strip().lower() == "y"
 
         self.awaiting_permission = False
-        self.query_one("#prompt-label", Static).update("")
+        label = self.query_one("#prompt-label", Static)
+        label.update("")
+        label.remove_class("active")
 
         callback = self._permission_callback
         self._permission_callback = None
@@ -1596,6 +1600,7 @@ class SeaCodeApp(App):
     def show_permission_prompt(self, action: str, callback, diff=None) -> None:
         self._permission_callback = callback
         self.awaiting_permission = True
+        self.query_one("#prompt-label", Static).add_class("active")
 
         if diff:
             self.show_permission_diff(diff)
