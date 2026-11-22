@@ -219,6 +219,42 @@ def load_session(project_root, session_id_or_prefix=None) -> dict:
     }
 
 
+def relative_time(iso_timestamp, now=None) -> str:
+    """Human age for an ISO timestamp: "just now", "5m ago",
+    "2h ago", "3d ago", or a date past a week. Unparseable input
+    returns the raw string's date part."""
+
+    if not isinstance(iso_timestamp, str) or not iso_timestamp:
+        return ""
+
+    try:
+        then = datetime.fromisoformat(iso_timestamp)
+    except ValueError:
+        return iso_timestamp[:10]
+
+    if then.tzinfo is None:
+        then = then.replace(tzinfo=timezone.utc)
+
+    if now is None:
+        now = utc_now()
+
+    seconds = max(int((now - then).total_seconds()), 0)
+
+    if seconds < 60:
+        return "just now"
+
+    if seconds < 3600:
+        return f"{seconds // 60}m ago"
+
+    if seconds < 86400:
+        return f"{seconds // 3600}h ago"
+
+    if seconds < 7 * 86400:
+        return f"{seconds // 86400}d ago"
+
+    return then.date().isoformat()
+
+
 def turns_label(turns: int) -> str:
     """Human turn count with correct plural ("1 turn", "3 turns")."""
 

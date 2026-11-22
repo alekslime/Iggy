@@ -282,5 +282,27 @@ class ListSessionsTests(unittest.TestCase):
         self.assertEqual([entry["id"] for entry in entries], [good])
 
 
+class RelativeTimeTests(unittest.TestCase):
+
+    NOW = sessions_module.datetime(2026, 11, 22, 12, 0, 0,
+                                     tzinfo=sessions_module.timezone.utc)
+
+    def rel(self, iso):
+        return sessions_module.relative_time(iso, now=self.NOW)
+
+    def test_ages(self):
+        self.assertEqual(self.rel("2026-11-22T11:59:30+00:00"), "just now")
+        self.assertEqual(self.rel("2026-11-22T11:45:00+00:00"), "15m ago")
+        self.assertEqual(self.rel("2026-11-22T09:00:00+00:00"), "3h ago")
+        self.assertEqual(self.rel("2026-11-20T12:00:00+00:00"), "2d ago")
+        self.assertEqual(self.rel("2026-11-01T12:00:00+00:00"), "2026-11-01")
+
+    def test_bad_input(self):
+        self.assertEqual(sessions_module.relative_time(""), "")
+        self.assertEqual(
+            sessions_module.relative_time("garbage"), "garbage"[:10]
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

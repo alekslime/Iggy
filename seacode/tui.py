@@ -719,8 +719,10 @@ class SeaCodeApp(App):
             text.append(f"  {number}  ", style="bold #7dd3fc")
             preview = entry["preview"][:40]
             label = sessions_module.turns_label(entry["turns"])
+            when = sessions_module.relative_time(entry["updated"])
+            meta = f"{when} · {label}" if when else label
             text.append(
-                f"{entry['id']}  {label}  {preview}\n",
+                f"{meta}  {preview}\n",
                 style="#8b93a1",
             )
 
