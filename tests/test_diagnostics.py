@@ -20,13 +20,6 @@ class DiagnosticsTests(unittest.TestCase):
         )
         patcher.start()
         self.addCleanup(patcher.stop)
-        # verify imported get_project_root by name; patch its binding.
-        verify_patcher = patch.object(
-            verify_module, "get_project_root",
-            return_value=self.project_root,
-        )
-        verify_patcher.start()
-        self.addCleanup(verify_patcher.stop)
 
     def tearDown(self):
         self._tmpdir.cleanup()

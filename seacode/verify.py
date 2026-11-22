@@ -27,7 +27,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-from seacode.tools import get_project_root, list_files, read_file
+import seacode.tools as _tools
+from seacode.tools import list_files, read_file
 
 
 # Tools whose failure represents an incomplete modification, not just
@@ -699,7 +700,7 @@ def verify_python_diagnostics(path: str):
         return None
 
     try:
-        root = get_project_root()
+        root = _tools.get_project_root()
         result = subprocess.run(
             [sys.executable, "-m", "py_compile", str(root / path)],
             cwd=root,
