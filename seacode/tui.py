@@ -385,7 +385,7 @@ class SeaCodeApp(App):
     #splash-hints {
         width: 64;
         content-align: center middle;
-        color: #5b6472;
+        color: #7a8494;
         margin-top: 1;
     }
     #splash-recents {
@@ -395,13 +395,13 @@ class SeaCodeApp(App):
     #splash-stats {
         width: 64;
         content-align: center middle;
-        color: #5b6472;
+        color: #7a8494;
         margin-top: 1;
     }
     #splash-tip {
         width: 64;
         content-align: center middle;
-        color: #5b6472;
+        color: #7a8494;
     }
     .dither-rule {
         width: 64;
@@ -450,7 +450,7 @@ class SeaCodeApp(App):
     #status-bar {
         height: 1;
         background: #10141d;
-        color: #5b6472;
+        color: #7a8494;
     }
     #status-left {
         width: 1fr;
