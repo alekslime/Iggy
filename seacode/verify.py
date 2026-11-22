@@ -200,6 +200,16 @@ FILENAME_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# Action verbs for M7.15's no-work-final-answer check: a request
+# containing one of these is asking for something to be *done*, so
+# a final answer before any tool has run is premature.
+ACTION_REQUEST_VERBS = (
+    "fix", "change", "update", "edit", "modify", "create", "delete",
+    "remove", "add", "implement", "refactor", "rename", "move",
+    "write", "run", "check", "test", "inspect", "look", "find",
+    "search", "read", "show", "list", "explain",
+)
+
 
 def classify_modification_result(tool_name: str, result) -> str:
     """Classify the outcome of a modification tool call.
@@ -820,6 +830,28 @@ def check_scope_creep(
         "If those changes were genuinely necessary to complete the "
         "task, explain why in the final answer. Otherwise, revert "
         "them so only the requested file(s) are changed."
+    )
+
+
+def looks_like_action_request(text: str) -> bool:
+    """Heuristic for M7.15: the request asks for work on the project
+    (an action verb, or a named file plus intent), as opposed to a
+    question that can be answered from general knowledge."""
+
+    if not isinstance(text, str) or not text.strip():
+        return False
+
+    lowered = text.lower()
+
+    if any(
+        re.search(rf"\b{verb}\b", lowered)
+        for verb in ACTION_REQUEST_VERBS
+    ):
+        return True
+
+    return bool(extract_mentioned_filenames(text)) and any(
+        word in lowered
+        for word in ("in", "the", "this", "that", "it")
     )
 
 

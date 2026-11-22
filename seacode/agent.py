@@ -54,6 +54,7 @@ from seacode.verify import (
     content_preserved_ratio,
     extract_change_pair,
     extract_mentioned_filenames,
+    looks_like_action_request,
     mentions_full_rewrite_intent,
     safe_read_file,
     verify_python_syntax,
@@ -218,6 +219,12 @@ MAX_INCOMPLETE_MULTI_TARGET_RETRY_ATTEMPTS = 2
 # M7.11, recomputed live rather than tracked as a pending flag.
 MAX_SCOPE_CREEP_RETRY_ATTEMPTS = 2
 
+# How many times a final answer is rejected when it arrives before
+# any tool has run at all, despite the request asking for work on
+# the project (M7.15) -- observed live: the model narrates intent
+# ("I need to inspect the files...") and stops there.
+MAX_NO_WORK_RETRY_ATTEMPTS = 2
+
 # The M7 keyword lists / thresholds / filename patterns that used to
 # live here now live in seacode.verify (imported above).
 
@@ -236,6 +243,11 @@ You have access to tools and are expected to ACT on tasks when the user asks you
 When you need to act, call one of the available tools, with complete
 arguments. Independent calls may go out together in one block; they
 run in order.
+
+If native tool calling is not available to you, make a tool call by
+replying with ONLY one JSON object in this exact form, and no other
+text before or after it:
+{"name": "tool_name", "arguments": {"argument": "value"}}
 
 When you are completely finished and no more tools are needed, answer
 in plain prose. Never emit a tool call and a final answer together:
@@ -489,16 +501,136 @@ def clean_model_response(raw_response: str) -> str:
 
 
 def parse_action(raw_response: str) -> dict:
-    """Convert the model's response into a tool/action dictionary."""
+    """Convert the model's response into a tool/action dictionary.
+
+    Tolerates a leading JSON object followed by extra material
+    (a second object, trailing prose): small models often emit
+    both, and the first complete object is the actionable one.
+    """
 
     clean_response = clean_model_response(raw_response)
 
-    action = json.loads(clean_response)
+    try:
+        action = json.loads(clean_response)
+    except json.JSONDecodeError:
+        start = clean_response.find("{")
+
+        if start == -1:
+            raise
+
+        action, _ = json.JSONDecoder().raw_decode(
+            clean_response[start:]
+        )
 
     if not isinstance(action, dict):
         raise ValueError("Model response must be a JSON object.")
 
     return action
+
+
+def normalize_action(action: dict) -> dict:
+    """Normalize the dialects models actually emit into the canonical
+    {"tool": name, "arguments": {...}} / {"tool": "none", "answer": ...}
+    shapes the loop consumes.
+
+    Observed in the wild (qwen2.5-coder via Ollama ignores native
+    tool_calls and writes JSON by hand, in whatever shape its
+    training favored):
+
+      {"name": "replace_in_file", "arguments": {...}}   (OpenAI-ish)
+      {"function": "read_file", "parameters": {...}}
+      {"tool_calls": [{"function": {"name": ..., "arguments": ...}}]}
+      {"answer": "..."}                                  (final reply)
+
+    Arguments given as a JSON string are parsed; an unparseable
+    string is passed through so execution fails visibly and the
+    recovery loop can correct it, rather than silently dropping it.
+    """
+
+    if not isinstance(action, dict):
+        return action
+
+    if action.get("tool"):
+        return action
+
+    name = action.get("name") or action.get("function")
+
+    if not isinstance(name, str) or not name:
+        calls = action.get("tool_calls")
+
+        if isinstance(calls, list) and calls and isinstance(calls[0], dict):
+            function = calls[0].get("function") or {}
+            name = function.get("name")
+            if isinstance(name, str) and name:
+                action = {
+                    "tool": name,
+                    "arguments": function.get("arguments", {}),
+                }
+                return _coerce_arguments(action)
+        elif "answer" in action:
+            return {"tool": "none", "answer": action.get("answer") or ""}
+        else:
+            return action
+    else:
+        action = {
+            "tool": name,
+            "arguments": (
+                action.get("arguments")
+                if action.get("arguments") is not None
+                else action.get("parameters", {})
+            ),
+        }
+
+    return _coerce_arguments(action)
+
+
+def _coerce_arguments(action: dict) -> dict:
+    arguments = action.get("arguments")
+
+    if isinstance(arguments, str):
+        try:
+            parsed = json.loads(arguments) if arguments.strip() else {}
+        except ValueError:
+            return action
+
+        if isinstance(parsed, dict):
+            action["arguments"] = parsed
+
+    return action
+
+
+def find_embedded_action(text: str):
+    """First recognizable action object embedded in prose, or None.
+
+    Small models narrate a plan ("Step 2: {...} Step 3: {...}")
+    instead of emitting one bare call. The enclosing prose must not
+    be mistaken for a final answer -- it usually ends by claiming
+    work that never ran.
+    """
+
+    if not isinstance(text, str):
+        return None
+
+    decoder = json.JSONDecoder()
+
+    for index, char in enumerate(text):
+        if char != "{":
+            continue
+
+        try:
+            candidate, _ = decoder.raw_decode(text[index:])
+        except ValueError:
+            continue
+
+        if isinstance(candidate, dict) and (
+            candidate.get("tool")
+            or candidate.get("name")
+            or candidate.get("function")
+            or candidate.get("tool_calls")
+        ):
+            return candidate
+
+    return None
 
 
 def extract_chunk_content(chunk) -> str:
@@ -810,6 +942,28 @@ def run_agent(
     incomplete_multi_target_retry_attempts = 0
     scope_creep_retry_attempts = 0
 
+    # M7.13 guard state: path of the most recent modification that
+    # passed every check, or None. While set, undo_last_change is
+    # blocked -- observed live: a small model, told only to "continue
+    # working", undid its own verified fix and then flailed. A user
+    # asking to undo starts a fresh run (this resets), so legitimate
+    # undos are unaffected; within a turn the model can still reverse
+    # an edit explicitly with replace_in_file after reading.
+    last_verified_edit_path = None
+
+    # M7.14 loop state: signature of the last executed tool call and
+    # how many times in a row it has repeated. Small models fall
+    # into identical-call loops (read the same file ten times until
+    # the tool budget is gone); the third identical consecutive call
+    # is blocked with a corrective instead of executed.
+    last_call_signature = None
+    repeated_call_count = 0
+
+    # M7.15 state: whether any tool has actually executed this run,
+    # and how many no-work final answers have been rejected.
+    tools_executed = 0
+    no_work_retry_attempts = 0
+
     # M7.8 recovery state: tracks whether the most recent *successful*
     # modification has gone unverified by any tool call since (no
     # run_command / read_file / search_files), so a final answer that
@@ -946,17 +1100,62 @@ def run_agent(
 
             cleaned = clean_model_response(raw_response)
 
-            if cleaned and not cleaned.startswith("{"):
+            if (
+                cleaned
+                and not cleaned.startswith("{")
+                and find_embedded_action(cleaned) is None
+            ):
                 # Plain prose with no tool calls: a genuine final
                 # answer, handled by the exact same block as the
                 # legacy {"tool": "none"} form below.
                 action = {"tool": "none", "answer": raw_response}
+            elif cleaned and not cleaned.startswith("{"):
+                # Tool-call JSON embedded in a narrated plan. Not a
+                # final answer -- and not executable as-is, since a
+                # plan usually describes several steps at once (and
+                # may claim they already happened). Correct the
+                # format like other malformed output (M7.5).
+                invalid_action_attempts += 1
+
+                print(
+                    "\nAgent embedded a tool call in prose instead "
+                    "of emitting it directly."
+                )
+
+                if invalid_action_attempts > MAX_INVALID_ACTION_ATTEMPTS:
+                    print(
+                        "\nAgent stopped after "
+                        f"{MAX_INVALID_ACTION_ATTEMPTS} consecutive "
+                        "invalid responses."
+                    )
+                    return None
+
+                messages.append({
+                    "role": "assistant",
+                    "content": raw_response,
+                })
+
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        "Your last response described tool calls "
+                        "inside a written plan instead of making "
+                        "one. Nothing in that plan has been "
+                        "executed.\n\n"
+                        "Make exactly one tool call now, by itself, "
+                        "with no narration, steps, or explanation "
+                        "around it. Then wait for its result before "
+                        "deciding the next step."
+                    ),
+                })
+
+                continue
             else:
                 try:
                     if not cleaned:
                         raise ValueError("empty response")
 
-                    action = parse_action(raw_response)
+                    action = normalize_action(parse_action(raw_response))
 
                 except (json.JSONDecodeError, ValueError) as e:
 
@@ -1029,6 +1228,41 @@ def run_agent(
         # -----------------------------------------
 
         if tool_name == "none":
+
+            if (
+                tools_executed == 0
+                and subagent_depth() == 0
+                and no_work_retry_attempts < MAX_NO_WORK_RETRY_ATTEMPTS
+                and looks_like_action_request(last_user_request)
+            ):
+                no_work_retry_attempts += 1
+
+                print(
+                    "\nRejecting premature final answer: the request "
+                    "asks for work but no tool has run yet (forced "
+                    f"retry {no_work_retry_attempts}/"
+                    f"{MAX_NO_WORK_RETRY_ATTEMPTS})."
+                )
+
+                messages.append({
+                    "role": "assistant",
+                    "content": raw_response,
+                })
+
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        "You described what you intend to do, but "
+                        "you have not actually done anything yet: no "
+                        "tool has been called.\n\n"
+                        "Start the task now. For a change to a file, "
+                        "first inspect it (read_file/search_files), "
+                        "then modify it. Describing a plan is not "
+                        "the task."
+                    ),
+                })
+
+                continue
 
             if pending_recovery and recovery_attempts < MAX_RECOVERY_ATTEMPTS:
 
@@ -1328,6 +1562,87 @@ def run_agent(
 
         print(f"\n{format_tool_call(tool_name, arguments)}")
 
+        # M7.14: identical consecutive calls can't produce new
+        # information. Track the signature; block from the third
+        # repetition on and tell the model to act on what it has.
+        call_signature = (
+            tool_name,
+            json.dumps(arguments, sort_keys=True, default=str)
+            if isinstance(arguments, dict) else str(arguments),
+        )
+
+        if call_signature == last_call_signature:
+            repeated_call_count += 1
+        else:
+            last_call_signature = call_signature
+            repeated_call_count = 1
+
+        if repeated_call_count > 2:
+            print(
+                f"\nBlocking repeated call: {tool_name} with the "
+                "same arguments has already run twice in a row."
+            )
+
+            if not from_native:
+                messages.append({
+                    "role": "assistant",
+                    "content": raw_response,
+                })
+
+            messages.append({
+                "role": "user",
+                "content": (
+                    f"You have already called `{tool_name}` with "
+                    "exactly these arguments twice in a row, and the "
+                    "result will not change. Do not repeat it. Act on "
+                    "the information you already have: make the "
+                    "modification the task requires, use a different "
+                    "tool with different arguments, or give your "
+                    "final answer."
+                ),
+            })
+
+            tool_calls += 1
+
+            continue
+
+        # M7.13: undoing a modification that just passed every check
+        # in this same turn is never the right next step -- block it
+        # and point at the final answer instead.
+        if (
+            tool_name == "undo_last_change"
+            and last_verified_edit_path is not None
+        ):
+            print(
+                "\nBlocking undo: the last modification passed "
+                "verification; undoing it would revert the requested "
+                "change."
+            )
+
+            if not from_native:
+                messages.append({
+                    "role": "assistant",
+                    "content": raw_response,
+                })
+
+            messages.append({
+                "role": "user",
+                "content": (
+                    f"`{last_verified_edit_path}` was just modified "
+                    "successfully and passed SeaCode's automatic "
+                    "verification. Undoing it now would revert the "
+                    "change the user asked for, so the undo was "
+                    "blocked. Give your final answer describing the "
+                    "completed change. If you genuinely believe the "
+                    "edit is wrong despite verification, say so in "
+                    "the answer instead of undoing it."
+                ),
+            })
+
+            tool_calls += 1
+
+            continue
+
         # M7.9: before letting any modification tool touch an existing
         # file, check whether the model has actually read or searched
         # that file at all this run. Applies to write_file,
@@ -1438,6 +1753,8 @@ def run_agent(
             run_post_tool_hooks(
                 tool_name, arguments, result, get_project_root()
             )
+
+            tools_executed += 1
 
         if isinstance(result, dict) and "error" in result:
             print(f"  ✖ {result['error']}")
@@ -1605,14 +1922,23 @@ def run_agent(
         # edit was never actually applied, so it shouldn't count either
         # towards "this file was handled" or towards "this file was
         # touched beyond what was asked."
-        if (
+        verified_clean_edit = (
             outcome == "success"
             and modification_path is not None
             and semantic_failure_message is None
             and wrong_file_failure_message is None
             and syntax_failure_message is None
-        ):
+        )
+
+        if verified_clean_edit:
             successfully_modified_paths.add(modification_path)
+            last_verified_edit_path = modification_path
+        elif (
+            semantic_failure_message is not None
+            or wrong_file_failure_message is not None
+            or syntax_failure_message is not None
+        ):
+            last_verified_edit_path = None
 
         if not from_native:
             messages.append({
@@ -1653,6 +1979,17 @@ def run_agent(
                 f"The file has been {revert_note}. Do not tell the user "
                 "the task is complete. Fix the syntax issue above and "
                 "try again."
+            )
+        elif verified_clean_edit:
+            followup_content = (
+                f"Tool `{tool_name}` returned:\n"
+                f"{json.dumps(result, indent=2)}\n\n"
+                "This modification has been applied and passed "
+                "SeaCode's automatic verification. The requested "
+                "change is complete: give your final answer now. "
+                "Do not call any more tools and do not undo this "
+                "change, unless the request explicitly asked for "
+                "more work."
             )
         else:
             followup_content = (
