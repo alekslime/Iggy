@@ -58,6 +58,7 @@ from seacode.verify import (
     looks_like_action_request,
     mentions_full_rewrite_intent,
     safe_read_file,
+    verify_python_diagnostics,
     verify_python_syntax,
     verify_semantic_edit,
     verify_target_file,
@@ -1943,6 +1944,13 @@ def run_agent(
                 modification_path,
                 post_content,
             )
+
+            # Real-toolchain diagnostics on the file as written;
+            # failures ride the syntax recovery path (revert+retry).
+            if syntax_failure_message is None:
+                syntax_failure_message = verify_python_diagnostics(
+                    modification_path
+                )
 
         if (
             semantic_failure_message is not None

@@ -23,9 +23,11 @@ import ast
 import difflib
 import json
 import re
+import subprocess
+import sys
 from pathlib import Path
 
-from seacode.tools import list_files, read_file
+from seacode.tools import get_project_root, list_files, read_file
 
 
 # Tools whose failure represents an incomplete modification, not just
@@ -679,6 +681,47 @@ def verify_python_syntax(path: str, post_content: str):
         )
 
     return None
+
+
+def verify_python_diagnostics(path: str):
+    """Compile the on-disk file with the real interpreter
+    (`python -m py_compile`) after an edit lands.
+
+    ast.parse (verify_python_syntax) catches syntax errors in the
+    content we captured; this catches what the actual toolchain
+    says about the file as written -- the same signal a local LSP
+    would give for this failure class, with no server needed.
+    Returns None when the file compiles (or isn't Python, or the
+    check itself can't run -- infra problems never block an edit).
+    """
+
+    if not isinstance(path, str) or not path.lower().endswith(".py"):
+        return None
+
+    try:
+        root = get_project_root()
+        result = subprocess.run(
+            [sys.executable, "-m", "py_compile", str(root / path)],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+    except Exception:
+        return None
+
+    if result.returncode == 0:
+        return None
+
+    detail = (result.stderr or result.stdout or "").strip()
+    detail = detail[-600:] if detail else "py_compile failed"
+
+    return (
+        f"`{path}` does not compile with the project interpreter "
+        f"after this change:\n{detail}\n\n"
+        "This would leave the project in a broken state."
+    )
 
 
 # -----------------------------------------------------------------------
