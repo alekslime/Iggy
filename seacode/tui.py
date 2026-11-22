@@ -1021,6 +1021,8 @@ class SeaCodeApp(App):
         if chatting:
             chat_input.focus()
 
+        self._apply_status_bar()
+
     # -------------------------------------------------------------
     # mode (Scout / Operate)
     # -------------------------------------------------------------
@@ -1068,6 +1070,16 @@ class SeaCodeApp(App):
         return pills
 
     def _apply_status_bar(self) -> None:
+        # On the splash, the pills already show model/mode/project --
+        # the status bar stays out of the way (version only) until a
+        # chat starts and the pills are gone.
+        if not self.chatting:
+            self.query_one("#status-left", Static).update("")
+            self.query_one("#status-right", Static).update(
+                Text(f"v{VERSION}", style="#7a8494")
+            )
+            return
+
         left = self._project_name
 
         if self._session_id is not None:
@@ -1089,9 +1101,9 @@ class SeaCodeApp(App):
             trust = "ask"
 
         if trust != "ask":
-            right.append(f"   trust:{trust}", style="#5b6472")
+            right.append(f"   trust:{trust}", style="#7a8494")
 
-        right.append(f"   v{VERSION}", style="#5b6472")
+        right.append(f"   v{VERSION}", style="#7a8494")
         self.query_one("#status-right", Static).update(right)
 
     def note_scouted_action(self, action: str) -> None:

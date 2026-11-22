@@ -226,6 +226,28 @@ class SplashFitTests(unittest.TestCase):
         asyncio.run(run())
 
 
+class StatusBarDedupTests(unittest.TestCase):
+    """Splash status bar shows only the version; chat shows all."""
+
+    def test_splash_then_chat(self):
+        async def run():
+            app = SeaCodeApp()
+            async with app.run_test(size=(80, 30)) as pilot:
+                await pilot.pause()
+                right = str(
+                    app.query_one("#status-right", Static).render()
+                )
+                self.assertNotIn(app._model, right)
+                app.chatting = True
+                await pilot.pause()
+                right = str(
+                    app.query_one("#status-right", Static).render()
+                )
+                self.assertIn(app._model, right)
+
+        asyncio.run(run())
+
+
 class SplashModeTests(unittest.TestCase):
 
     def test_breakpoints(self):
