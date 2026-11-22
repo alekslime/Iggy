@@ -130,6 +130,22 @@ def splash_mode(height: int) -> str:
     return "full"
 
 
+def context_meter(messages, limit_tokens) -> str:
+    """One compact gauge: "ctx ▓▓░░░ 41%". Empty when no budget."""
+
+    if not limit_tokens:
+        return ""
+
+    used = sum(
+        context_module.estimate_message_tokens(m) for m in messages
+    )
+    percent = min(used * 100 // max(limit_tokens, 1), 100)
+    filled = percent * 5 // 100
+    bar = "▓" * filled + "░" * (5 - filled)
+
+    return f"ctx {bar} {percent}%"
+
+
 def max_recents_for_height(height: int, mascot_shown: bool) -> int:
     """How many recent sessions fit the splash at this height: leftover
     rows after the fixed stack, minus the block's own header row."""
@@ -1192,6 +1208,13 @@ class SeaCodeApp(App):
 
         if trust != "ask":
             right.append(f"   trust:{trust}", style="#7a8494")
+
+        meter = context_meter(
+            self.messages, context_module.get_context_limit()
+        )
+
+        if meter:
+            right.append(f"   {meter}", style="#7a8494")
 
         right.append(f"   v{VERSION}", style="#7a8494")
         self.query_one("#status-right", Static).update(right)

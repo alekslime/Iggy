@@ -22,6 +22,7 @@ from seacode.sessions import save_session
 from seacode.tui import (
     SeaCodeApp,
     classify_line,
+    context_meter,
     max_recents_for_height,
     parse_slash_command,
     splash_mode,
@@ -226,6 +227,18 @@ class SplashFitTests(unittest.TestCase):
         asyncio.run(run())
 
 
+class ContextMeterTests(unittest.TestCase):
+
+    def test_empty_and_full(self):
+        self.assertEqual(context_meter([], 0), "")
+        self.assertEqual(context_meter([], 100), "ctx ░░░░░ 0%")
+        meter = context_meter(
+            [{"role": "user", "content": "x" * 400}], 100
+        )
+        self.assertIn("100%", meter)
+        self.assertIn("▓▓▓▓▓", meter)
+
+
 class PermissionCardTests(unittest.TestCase):
 
     def test_prompt_label_includes_diff_stats(self):
@@ -235,11 +248,6 @@ class PermissionCardTests(unittest.TestCase):
                 await pilot.pause()
                 app.chatting = True
                 await pilot.pause()
-                labelled = []
-
-                def capture(action, cb, diff=None):
-                    labelled.append((action, diff))
-
                 app.show_permission_prompt(
                     "modify file: a.py",
                     lambda approved: None,
