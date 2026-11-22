@@ -226,6 +226,28 @@ class SplashFitTests(unittest.TestCase):
         asyncio.run(run())
 
 
+class ThemeTests(unittest.TestCase):
+
+    def test_invalid_theme_falls_back(self):
+        self.assertEqual(SeaCodeApp(theme="bogus")._theme_name, "abyss")
+        self.assertEqual(SeaCodeApp(theme="coral")._theme_name, "coral")
+
+    def test_slash_theme_switches_live(self):
+        async def run():
+            app = SeaCodeApp()
+            async with app.run_test(size=(80, 30)) as pilot:
+                await pilot.pause()
+                app.chatting = True
+                await pilot.pause()
+                app.handle_slash_command("theme", "kelp")
+                await pilot.pause()
+                self.assertEqual(app._theme_name, "kelp")
+                app.handle_slash_command("theme", "nope")
+                self.assertEqual(app._theme_name, "kelp")
+
+        asyncio.run(run())
+
+
 class WorkingIndicatorTests(unittest.TestCase):
 
     def test_status_bar_shows_working_fish_during_turn(self):

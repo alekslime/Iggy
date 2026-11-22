@@ -81,6 +81,30 @@ MASCOT_PULSE_BY_MODE = {
 
 WORKING_INDICATOR = "><((°> working…"
 
+# Visual themes: one palette per name, applied live to the screen,
+# feed, mascot, and wordmark. Configured via seacode.toml's theme
+# key or switched mid-chat with /theme.
+THEMES = {
+    "abyss": {
+        "bg": "#0b0e14", "panel": "#10141d", "accent": "#7dd3fc",
+        "mascot": "#4caf78", "logo": "#e8eaed",
+    },
+    "kelp": {
+        "bg": "#07130d", "panel": "#0c1f15", "accent": "#7be3a2",
+        "mascot": "#3fa66a", "logo": "#e6f5ea",
+    },
+    "coral": {
+        "bg": "#170e0a", "panel": "#241611", "accent": "#ffb08a",
+        "mascot": "#f0a35e", "logo": "#fdf0e6",
+    },
+    "mono": {
+        "bg": "#0a0a0a", "panel": "#141414", "accent": "#d0d5db",
+        "mascot": "#9aa3ad", "logo": "#f2f2f2",
+    },
+}
+
+DEFAULT_THEME = "abyss"
+
 
 # Splash vertical budget, in rows, excluding the recent-sessions block
 # (which sizes itself to leftover space -- see max_recents_for_height):
@@ -248,6 +272,7 @@ SLASH_HELP = (
     "/sessions        list saved conversation sessions\n"
     "/model [name]    show or switch the model\n"
     "/tools           list built-in, MCP and subagent tools\n"
+    "/theme [name]    show or switch theme (abyss/kelp/coral/mono)\n"
     "/scout           read-only mode (auto-deny modifications)\n"
     "/operate         normal mode (prompt for modifications)\n"
     "/clear           clear the feed"
@@ -504,10 +529,13 @@ class SeaCodeApp(App):
         session_id=None,
         initial_turns=0,
         animate=True,
+        theme=None,
     ) -> None:
         super().__init__()
         self.title = "SeaCode"
         self._animate = animate
+        self._theme_name = theme if theme in THEMES else DEFAULT_THEME
+        self._theme = THEMES[self._theme_name]
         self._art_phase = 0
         self._art_timer = None
         self._model = model or seacode_module.MODEL
@@ -594,6 +622,18 @@ class SeaCodeApp(App):
                 yield Static("", id="status-left")
                 yield Static("", id="status-right")
 
+    def _apply_theme(self) -> None:
+        """Paint the current theme onto the live widgets."""
+
+        theme = self._theme
+        self.screen.styles.background = theme["bg"]
+        self.query_one("#feed", RichLog).styles.background = theme["bg"]
+        self.query_one("#status-bar", Horizontal).styles.background = (
+            theme["panel"]
+        )
+        self.query_one("#mascot", Static).styles.color = theme["mascot"]
+        self.query_one("#logo", Static).styles.color = theme["logo"]
+
     def on_mount(self) -> None:
         # Route seacode/tools.py's permission checks through the TUI
         # instead of the raw input() prompt seacode.permissions uses by
@@ -606,6 +646,7 @@ class SeaCodeApp(App):
         # styling by hand here, once widgets actually exist to style.
         self._apply_mode_styling(self.mode)
         self._apply_status_bar()
+        self._apply_theme()
         self._fit_splash()
 
         self.feed.write(
@@ -899,6 +940,8 @@ class SeaCodeApp(App):
             self.feed.write(
                 Text("Tools: " + ", ".join(names), style="#d0d5db")
             )
+        elif name == "theme":
+            self._slash_theme(arg)
         elif name == "sessions":
             self._slash_sessions()
         elif name == "undo":
@@ -910,6 +953,36 @@ class SeaCodeApp(App):
                     style="bold yellow",
                 )
             )
+
+    def _slash_theme(self, arg: str) -> None:
+        if not arg:
+            self.feed.write(
+                Text(
+                    f"Theme: {self._theme_name} "
+                    f"(options: {', '.join(THEMES)})",
+                    style="bold",
+                )
+            )
+            return
+
+        name = arg.strip().lower()
+
+        if name not in THEMES:
+            self.feed.write(
+                Text(
+                    f"Unknown theme {arg!r} "
+                    f"(options: {', '.join(THEMES)}).",
+                    style="bold yellow",
+                )
+            )
+            return
+
+        self._theme_name = name
+        self._theme = THEMES[name]
+        self._apply_theme()
+        self.feed.write(
+            Text(f"Switched theme to {name}", style="bold green")
+        )
 
     def _slash_model(self, arg: str) -> None:
         if not arg:
@@ -1440,6 +1513,7 @@ def main(
     session_id=None,
     initial_turns=0,
     animate=True,
+    theme=None,
 ) -> None:
     SeaCodeApp(
         model=model,
@@ -1449,6 +1523,7 @@ def main(
         session_id=session_id,
         initial_turns=initial_turns,
         animate=animate,
+        theme=theme,
     ).run()
 
 

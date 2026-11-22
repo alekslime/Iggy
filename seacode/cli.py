@@ -467,6 +467,7 @@ def run_tui(args) -> int:
             session_id=session_id,
             initial_turns=initial_turns,
             animate=not getattr(args, "no_anim", False),
+            theme=config.get("theme") if isinstance(config, dict) else None,
         ).run()
     finally:
         _stop_mcp()

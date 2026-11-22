@@ -33,6 +33,7 @@ KNOWN_KEYS = (
     "max_tools",
     "context_tokens",
     "trust",
+    "theme",
     "extra_commands",
 )
 
@@ -48,6 +49,7 @@ DEFAULT_CONFIG_TEXT = """\
 # max_tools = 10
 # context_tokens = 16000  # wire budget; older history is trimmed, not lost
 # trust = "ask"  # ask | edits | all
+# theme = "abyss"  # TUI theme: abyss | kelp | coral | mono
 # extra_commands = []  # appended to the run_command allowlist
 
 # [hooks]
