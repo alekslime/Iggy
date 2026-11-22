@@ -25,7 +25,11 @@ import seacode.mcp as mcp_module
 from seacode import __version__
 from seacode import permissions as permissions_module
 from seacode import providers as providers_module
-from seacode.config import load_project_config, write_default_config
+from seacode.config import (
+    load_model_profiles,
+    load_project_config,
+    write_default_config,
+)
 from seacode.sessions import list_sessions, load_session, turns_label
 from seacode.tools import (
     get_project_root,
@@ -220,6 +224,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sessions.set_defaults(func=run_sessions)
 
+    models_cmd = subparsers.add_parser(
+        "models",
+        help="List local (Ollama) models, or pull one with --pull.",
+    )
+    models_cmd.add_argument(
+        "--pull",
+        metavar="MODEL",
+        default=None,
+        help="Pull this model first, then list.",
+    )
+    models_cmd.add_argument(
+        "--host",
+        default=None,
+        help="Ollama host (default: $SEACODE_HOST / $OLLAMA_HOST).",
+    )
+    models_cmd.set_defaults(func=run_models)
+
     mcp = subparsers.add_parser(
         "mcp",
         help="List MCP servers and tools from .mcp.json.",
@@ -375,11 +396,22 @@ def apply_common_options(args) -> tuple:
     )
 
     # Generation options for the local runtime: a real context
-    # window instead of Ollama's 4096 default.
-    num_ctx = providers_module.resolve_num_ctx(
-        getattr(args, "num_ctx", None), config
+    # window instead of Ollama's 4096 default, plus any per-model
+    # profile from seacode.toml's [models."..."] tables (flag wins).
+    model = seacode_module.resolve_model(
+        getattr(args, "model", None), config
     )
-    seacode_module.set_model_options({"num_ctx": num_ctx})
+    profile = load_model_profiles(root).get(model, {})
+    num_ctx = providers_module.resolve_num_ctx(
+        getattr(args, "num_ctx", None),
+        {**config, **profile},
+    )
+    options = {"num_ctx": num_ctx}
+
+    if "temperature" in profile:
+        options["temperature"] = profile["temperature"]
+
+    seacode_module.set_model_options(options)
 
     # Hooks from seacode.toml's [hooks] table, and MCP servers from
     # .mcp.json (their tools register as dynamic tools). Starting MCP
@@ -531,6 +563,66 @@ def run_sessions(args) -> int:
               f"{entry['model']}")
         if entry["preview"]:
             print(f"    {entry['preview']}")
+
+    return 0
+
+
+def format_model_list(models) -> list:
+    """Display lines for ollama's model objects/dicts."""
+
+    lines = []
+
+    for entry in models or []:
+        name = getattr(entry, "model", None) or (
+            entry.get("model") if isinstance(entry, dict) else None
+        ) or getattr(entry, "name", None) or "?"
+
+        size = getattr(entry, "size", None) or (
+            entry.get("size") if isinstance(entry, dict) else None
+        )
+        size_text = (
+            f"{size / 1e9:.1f} GB" if isinstance(size, (int, float))
+            else "?"
+        )
+        lines.append(f"  {name}  ({size_text})")
+
+    return lines
+
+
+def run_models(args) -> int:
+    import ollama
+
+    host = providers_module.resolve_base_url(
+        getattr(args, "host", None), None, "ollama"
+    )
+    client = ollama.Client(host=host)
+
+    try:
+        if getattr(args, "pull", None):
+            print(f"Pulling {args.pull} ...")
+            client.pull(args.pull)
+            print("Done.")
+
+        response = client.list()
+    except Exception as e:
+        print(
+            f"Cannot reach Ollama at {host}: {e}\n"
+            "Is the server running? Start it with: ollama serve"
+        )
+        return 1
+
+    models = getattr(response, "models", None) or (
+        response.get("models") if isinstance(response, dict) else []
+    )
+
+    if not models:
+        print("No local models. Pull one, e.g.:")
+        print("  seacode models --pull qwen2.5-coder:7b")
+        return 0
+
+    print("Local models:")
+    for line in format_model_list(models):
+        print(line)
 
     return 0
 

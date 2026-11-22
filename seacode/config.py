@@ -98,6 +98,59 @@ def load_project_config(project_root) -> dict:
     }
 
 
+def load_model_profiles(project_root) -> dict:
+    """Per-model generation profiles from seacode.toml:
+
+        [models."qwen2.5-coder:3b"]
+        num_ctx = 8192
+        temperature = 0.2
+
+    Returns {model_name: {"num_ctx": int, "temperature": float}}
+    with unusable entries dropped. Missing/invalid files give {}.
+    """
+
+    path = config_path(project_root)
+
+    if not path.is_file():
+        return {}
+
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return {}
+
+    table = data.get("models", {})
+
+    if not isinstance(table, dict):
+        return {}
+
+    profiles = {}
+
+    for name, spec in table.items():
+        if not isinstance(spec, dict):
+            continue
+
+        profile = {}
+
+        num_ctx = spec.get("num_ctx")
+
+        if isinstance(num_ctx, int) and not isinstance(num_ctx, bool) \
+                and num_ctx > 0:
+            profile["num_ctx"] = num_ctx
+
+        temperature = spec.get("temperature")
+
+        if isinstance(temperature, (int, float)) \
+                and not isinstance(temperature, bool) \
+                and 0 <= temperature <= 2:
+            profile["temperature"] = float(temperature)
+
+        if profile:
+            profiles[name] = profile
+
+    return profiles
+
+
 def write_default_config(project_root, force=False):
     """Write a starter seacode.toml. Returns the path, or None if the
     file already exists and force is not set."""

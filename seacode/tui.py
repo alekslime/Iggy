@@ -1029,9 +1029,30 @@ class SeaCodeApp(App):
 
     def _slash_model(self, arg: str) -> None:
         if not arg:
-            self.feed.write(
-                Text(f"Model: {self._model}", style="bold")
-            )
+            lines = [f"Model: {self._model}"]
+
+            # List what the local runtime actually has, marking the
+            # active one. Best-effort: hosted providers just show
+            # the current model.
+            try:
+                import ollama
+
+                response = ollama.Client().list()
+                models = getattr(response, "models", None) or []
+                names = [
+                    getattr(m, "model", None) or getattr(m, "name", "?")
+                    for m in models
+                ]
+
+                if names:
+                    lines.append("Local models:")
+                    for name in names:
+                        mark = " *" if name == self._model else ""
+                        lines.append(f"  {name}{mark}")
+            except Exception:
+                pass
+
+            self.feed.write(Text("\n".join(lines), style="bold"))
             return
 
         self._model = arg
