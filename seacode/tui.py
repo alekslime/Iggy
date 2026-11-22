@@ -72,6 +72,15 @@ LOGO = (
 ART_TICK_SECONDS = 0.15
 MASCOT_PULSE = ("#4caf78", "#5cc68a", "#4caf78", "#3d8f61")
 
+# The mascot breathes in the mode's key: calm bright mint in Scout
+# (read-only), the classic greens in Operate.
+MASCOT_PULSE_BY_MODE = {
+    "operate": MASCOT_PULSE,
+    "scout": ("#5cc68a", "#8bf0b3", "#5cc68a", "#4caf78"),
+}
+
+WORKING_INDICATOR = "><((°> working…"
+
 
 # Splash vertical budget, in rows, excluding the recent-sessions block
 # (which sizes itself to leftover space -- see max_recents_for_height):
@@ -979,8 +988,9 @@ class SeaCodeApp(App):
         self.query_one("#splash-rule", Static).update(
             wave_rule(64, self._art_phase)
         )
-        self.query_one("#mascot", Static).styles.color = MASCOT_PULSE[
-            self._art_phase % len(MASCOT_PULSE)
+        pulse = MASCOT_PULSE_BY_MODE.get(self.mode, MASCOT_PULSE)
+        self.query_one("#mascot", Static).styles.color = pulse[
+            self._art_phase % len(pulse)
         ]
 
         height = len(MASCOT.splitlines())
@@ -1086,6 +1096,9 @@ class SeaCodeApp(App):
 
         if self._session_id is not None:
             left += f"  {self._session_id}"
+
+        if self.turn_running:
+            left += f"   {WORKING_INDICATOR}"
 
         self.query_one("#status-left", Static).update(left)
 
@@ -1407,6 +1420,7 @@ class SeaCodeApp(App):
     def watch_turn_running(self, running: bool) -> None:
         if not self.awaiting_permission:
             self.query_one("#chat-input", Input).disabled = running
+        self._apply_status_bar()
 
     def watch_awaiting_permission(self, awaiting: bool) -> None:
         input_widget = self.query_one("#chat-input", Input)
