@@ -82,6 +82,21 @@ MASCOT_EXTRA_ROWS = len(MASCOT.splitlines()) + 1
 MASCOT_MIN_HEIGHT = SPLASH_BASE_ROWS + MASCOT_EXTRA_ROWS + 1
 
 
+def splash_mode(height: int) -> str:
+    """Splash layout for a terminal height: "compact" (wordmark and
+    input only), "standard" (plus sessions/stats), or "full" (the
+    mascot joins above the wordmark). One place decides, so resize
+    handling and tests agree."""
+
+    if height < 20:
+        return "compact"
+
+    if height < MASCOT_MIN_HEIGHT:
+        return "standard"
+
+    return "full"
+
+
 def max_recents_for_height(height: int, mascot_shown: bool) -> int:
     """How many recent sessions fit the splash at this height: leftover
     rows after the fixed stack, minus the block's own header row."""
@@ -656,7 +671,7 @@ class SeaCodeApp(App):
         if height is None:
             height = self.size.height
 
-        mascot_shown = height >= MASCOT_MIN_HEIGHT
+        mascot_shown = splash_mode(height) == "full"
         cap = max_recents_for_height(height, mascot_shown)
         recents = self._recent_lines(cap)
 
@@ -751,7 +766,7 @@ class SeaCodeApp(App):
         if height is None:
             height = self.size.height
 
-        tall = height >= MASCOT_MIN_HEIGHT
+        tall = splash_mode(height) == "full"
         self.query_one("#splash-top", Horizontal).set_class(
             not tall, "hidden"
         )

@@ -24,6 +24,7 @@ from seacode.tui import (
     classify_line,
     max_recents_for_height,
     parse_slash_command,
+    splash_mode,
 )
 from textual.containers import Horizontal
 from textual.widgets import Input, RichLog, Static
@@ -223,6 +224,16 @@ class SplashFitTests(unittest.TestCase):
                     )
 
         asyncio.run(run())
+
+
+class SplashModeTests(unittest.TestCase):
+
+    def test_breakpoints(self):
+        self.assertEqual(splash_mode(10), "compact")
+        self.assertEqual(splash_mode(19), "compact")
+        self.assertEqual(splash_mode(24), "standard")
+        self.assertEqual(splash_mode(44), "standard")
+        self.assertEqual(splash_mode(50), "full")
 
 
 class MaxRecentsTests(unittest.TestCase):
