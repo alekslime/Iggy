@@ -227,6 +227,26 @@ class SplashFitTests(unittest.TestCase):
         asyncio.run(run())
 
 
+class SidebarTests(unittest.TestCase):
+
+    def test_sidebar_only_on_wide_chat(self):
+        async def run():
+            app = SeaCodeApp()
+            async with app.run_test(size=(160, 40)) as pilot:
+                await pilot.pause()
+                sidebar = app.query_one("#sidebar", Static)
+                self.assertFalse(sidebar.display)
+                app.chatting = True
+                await pilot.pause()
+                self.assertTrue(sidebar.display)
+                self.assertIn("Project", str(sidebar.render()))
+                await pilot.resize_terminal(80, 40)
+                await pilot.pause()
+                self.assertFalse(sidebar.display)
+
+        asyncio.run(run())
+
+
 class ContextMeterTests(unittest.TestCase):
 
     def test_empty_and_full(self):

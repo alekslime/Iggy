@@ -474,6 +474,15 @@ class SeaCodeApp(App):
         scrollbar-background: #0b0e14;
         padding: 0 1;
     }
+    #chat-body {
+        height: 1fr;
+    }
+    #sidebar {
+        width: 32;
+        border-left: solid #3a4152;
+        padding: 0 1;
+        color: #8b93a1;
+    }
     #prompt-label {
         height: auto;
         min-height: 0;
@@ -622,13 +631,15 @@ class SeaCodeApp(App):
                     classes="dither-rule",
                     id="splash-rule",
                 )
-        yield RichLog(
-            id="feed",
-            wrap=True,
-            highlight=False,
-            markup=False,
-            classes="hidden",
-        )
+        with Horizontal(id="chat-body", classes="hidden"):
+            yield RichLog(
+                id="feed",
+                wrap=True,
+                highlight=False,
+                markup=False,
+                classes="hidden",
+            )
+            yield Static("", id="sidebar", classes="hidden")
         with Vertical(id="bottom-bar"):
             yield Static("", id="prompt-label", classes="hidden")
             yield Input(
@@ -827,6 +838,7 @@ class SeaCodeApp(App):
         self._fit_splash(height=event.size.height)
         self._populate_splash_extras(height=event.size.height)
         self._fit_splash_vertical()
+        self._update_sidebar(width=event.size.width)
 
     def _fit_splash(self, height=None) -> None:
         """Show the mascot row (seahorse between animated sea strips)
@@ -1111,6 +1123,9 @@ class SeaCodeApp(App):
 
     def watch_chatting(self, chatting: bool) -> None:
         self.query_one("#splash", Vertical).set_class(chatting, "hidden")
+        self.query_one("#chat-body", Horizontal).set_class(
+            not chatting, "hidden"
+        )
         self.query_one("#feed", RichLog).set_class(not chatting, "hidden")
 
         if chatting:
@@ -1125,6 +1140,65 @@ class SeaCodeApp(App):
             chat_input.focus()
 
         self._apply_status_bar()
+        self._update_sidebar()
+
+    def _update_sidebar(self, width=None) -> None:
+        """Wide terminals (>=140 cols) get a context rail beside the
+        transcript: project, git, session, and tool inventory. It
+        hides again below that width or back on the splash."""
+
+        try:
+            sidebar = self.query_one("#sidebar", Static)
+        except Exception:
+            return
+
+        if width is None:
+            width = self.size.width
+
+        show = self.chatting and width >= 140
+        sidebar.set_class(not show, "hidden")
+
+        if not show:
+            return
+
+        lines = [f"Project  {self._project_name}"]
+
+        try:
+            lines.append(
+                f"Files    {len(tools_module.list_files('.'))}"
+            )
+        except Exception:
+            pass
+
+        try:
+            status = tools_module.git_status()
+            changed = (
+                len(status.strip().splitlines()) if status.strip() else 0
+            )
+            lines.append(
+                f"Git      {changed} changed" if changed
+                else "Git      clean"
+            )
+        except Exception:
+            pass
+
+        if self._session_id:
+            lines.append(f"Session  {self._session_id}")
+
+        lines.append(f"Turns    {self._turns}")
+        lines.append(
+            f"Tools    {len(seacode_module.known_tool_names())}"
+        )
+        lines.append(f"Theme    {self._theme_name}")
+
+        meter = context_meter(
+            self.messages, context_module.get_context_limit()
+        )
+
+        if meter:
+            lines.append(f"Context  {meter[4:]}")
+
+        sidebar.update("\n".join(lines))
 
     # -------------------------------------------------------------
     # mode (Scout / Operate)
@@ -1328,6 +1402,7 @@ class SeaCodeApp(App):
             self.write_answer(answer)
 
         self.persist_session()
+        self._update_sidebar()
         self.query_one("#chat-input", Input).focus()
 
     def write_answer(self, answer: str) -> None:
