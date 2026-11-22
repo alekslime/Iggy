@@ -109,21 +109,46 @@ def should_auto_approve(action: str, config=None) -> bool:
     return False
 
 
-def request_permission(action: str) -> bool:
+def request_permission(action: str, diff: str | None = None) -> bool:
     """Ask the user to approve an action, honoring the trust level.
 
     Prints `? action` and prompts for a y/N confirmation, returning
     True only on an explicit "y" -- unless the trust level
     auto-approves it, in which case a `✓` line is printed and no
     prompt is shown.
+
+    When `diff` is given (file modifications pass their proposed
+    unified diff), it is printed *before* the prompt so the user
+    approves the actual change, not just a filename. Auto-approved
+    actions show it too, so the transcript still records what landed.
     """
 
     if should_auto_approve(action):
         print(f"  ✓ {action} (auto-approved, trust={get_trust_level()})")
+        if diff:
+            _print_diff(diff)
         return True
 
     print(f"  ? {action}")
 
+    if diff:
+        _print_diff(diff)
+
     response = input("  Proceed? [y/N]: ").strip().lower()
 
     return response == "y"
+
+
+MAX_DIFF_LINES = 60
+
+
+def _print_diff(diff: str) -> None:
+    lines = diff.splitlines()
+
+    for line in lines[:MAX_DIFF_LINES]:
+        print(f"    {line}")
+
+    hidden = len(lines) - MAX_DIFF_LINES
+
+    if hidden > 0:
+        print(f"    … (+{hidden} more diff lines)")

@@ -1,5 +1,6 @@
 from datetime import datetime
 from pathlib import Path
+import difflib
 import os
 import shlex
 import subprocess
@@ -268,6 +269,20 @@ def backup_file(file_path: Path, project_root: Path) -> str:
     return str(backup_path.relative_to(project_root))
 
 
+def make_diff(path: str, before: str, after: str) -> str:
+    """Unified diff of a proposed change, shown at approval time so the
+    user sees the actual edit before it lands ("" when unchanged)."""
+
+    return "".join(
+        difflib.unified_diff(
+            before.splitlines(keepends=True),
+            after.splitlines(keepends=True),
+            fromfile=f"a/{path}",
+            tofile=f"b/{path}",
+        )
+    )
+
+
 def write_file(path: str, content: str) -> str:
     """Write a text file inside the project after requesting permission."""
 
@@ -293,7 +308,18 @@ def write_file(path: str, content: str) -> str:
             f"Not a file: {path}"
         )
 
-    if not request_permission(f"modify file: {path}"):
+    before = ""
+
+    if file_path.exists():
+        try:
+            before = file_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            before = ""
+
+    if not request_permission(
+        f"modify file: {path}",
+        diff=make_diff(path, before, content) or None,
+    ):
         return "File modification denied by user."
 
     if file_path.exists():
@@ -447,9 +473,6 @@ def undo_last_change(path: str | None = None) -> str:
     latest = backups[-1]
     target_relpath = latest["path"]
 
-    if not request_permission(f"restore file from backup: {target_relpath}"):
-        return "File modification denied by user."
-
     project_root = get_project_root()
     backup_path = project_root / latest["backup"]
     target_path = (project_root / target_relpath).resolve()
@@ -458,6 +481,22 @@ def undo_last_change(path: str | None = None) -> str:
         raise PermissionError(
             "Access denied: file is outside the project directory."
         )
+
+    before = ""
+    restored = ""
+
+    try:
+        if target_path.is_file():
+            before = target_path.read_text(encoding="utf-8")
+        restored = backup_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        pass
+
+    if not request_permission(
+        f"restore file from backup: {target_relpath}",
+        diff=make_diff(target_relpath, before, restored) or None,
+    ):
+        return "File modification denied by user."
 
     if target_path.exists():
         if not target_path.is_file():
@@ -530,17 +569,20 @@ def replace_in_file(
             "The change was not applied."
         )
 
-    if not request_permission(f"modify file: {path}"):
-        return "File modification denied by user."
-
-    backup_path = backup_file(file_path, project_root)
-    print(f"Backed up existing file to: {backup_path}")
-
     updated_content = content.replace(
         old_text,
         new_text,
         1,
     )
+
+    if not request_permission(
+        f"modify file: {path}",
+        diff=make_diff(path, content, updated_content) or None,
+    ):
+        return "File modification denied by user."
+
+    backup_path = backup_file(file_path, project_root)
+    print(f"Backed up existing file to: {backup_path}")
 
     file_path.write_text(
         updated_content,
@@ -584,7 +626,15 @@ def delete_file(path: str) -> str:
             f"Not a file: {path}"
         )
 
-    if not request_permission(f"delete file: {path}"):
+    try:
+        before = file_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        before = ""
+
+    if not request_permission(
+        f"delete file: {path}",
+        diff=make_diff(path, before, "") or None,
+    ):
         return "File modification denied by user."
 
     backup_path = backup_file(file_path, project_root)
