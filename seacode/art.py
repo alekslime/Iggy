@@ -115,36 +115,13 @@ def side_column(width: int, height: int, phase: int = 0, seed: int = 0,
 
     grid = [[" "] * width for _ in range(height)]
 
-    # Bubble lanes scale with width so wide terminals get a denser
-    # sea instead of the same few specks spread thin. Glyphs are
-    # dots of increasing weight -- no letter "o", which read as a
-    # stray "0" artifact at full screen.
-    lanes = max(3, width // 3)
+    lanes = max(2, width // 6)
 
     for i in range(lanes):
         x = (seed * 11 + i * 17) % width
         speed = 1 + (i % 2)
         y = (height - 1 - (phase * speed + i * 7 + seed * 3)) % height
-        grid[y][x] = ("·", "•", "°")[i % 3]
-
-    # Two slow wave layers drifting across, out of phase with each
-    # other. They give the strip a surface instead of confetti.
-    if height >= 6:
-        for layer, base_y in enumerate(
-            (height // 3, (2 * height) // 3)
-        ):
-            offset = phase * (layer + 1) + seed * 4
-
-            for x in range(width):
-                # Sparse crests, not a solid row: most cells stay
-                # water, a glyph lands every few columns.
-                if (x + offset) % 4 != 0:
-                    continue
-
-                y = base_y + ((x // 5 + layer) % 2)
-
-                if 0 <= y < height and grid[y][x] == " ":
-                    grid[y][x] = ("~", "≈")[(x + offset) % 2]
+        grid[y][x] = (".", "o", "°")[i % 3]
 
     fishes = FISH_RIGHT if direction > 0 else FISH_LEFT
 
