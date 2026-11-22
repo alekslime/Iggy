@@ -17,7 +17,7 @@ from seacode.context import (
     trim_messages,
 )
 from seacode.permissions import get_trust_level
-from seacode.providers import TOOL_SCHEMAS
+from seacode.providers import TOOL_SCHEMAS, OpenAIClient
 from seacode.dynamic_tools import (
     dynamic_tool_names,
     dynamic_tool_schemas,
@@ -70,6 +70,25 @@ MAX_TOOL_CALLS = 10
 # Tool budget for a delegated subagent (the `task` tool): deliberately
 # smaller than a top-level run so a subtask stays a subtask.
 MAX_SUBAGENT_TOOL_CALLS = 5
+
+
+# Per-run Ollama generation options (num_ctx, temperature, ...),
+# set by the CLI from flags/config/model profiles. Sent as the
+# chat call's `options` for Ollama clients only -- the
+# OpenAI-compatible client has no equivalent per-call knob here.
+MODEL_OPTIONS: dict = {}
+
+
+def set_model_options(options) -> None:
+    global MODEL_OPTIONS
+    MODEL_OPTIONS = dict(options or {})
+
+
+def _chat_extra_kwargs() -> dict:
+    if MODEL_OPTIONS and not isinstance(client, OpenAIClient):
+        return {"options": dict(MODEL_OPTIONS)}
+
+    return {}
 
 
 def config_value(config, key):
@@ -1030,6 +1049,7 @@ def run_agent(
                         messages=wire_messages,
                         tools=effective_tool_schemas(),
                         stream=True,
+                        **_chat_extra_kwargs(),
                     )
 
                     parts = []
@@ -1054,6 +1074,7 @@ def run_agent(
                         model=model,
                         messages=wire_messages,
                         tools=effective_tool_schemas(),
+                        **_chat_extra_kwargs(),
                     )
 
                     raw_response = extract_chunk_content(response)

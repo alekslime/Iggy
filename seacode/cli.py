@@ -79,6 +79,16 @@ def add_common_arguments(parser):
         ),
     )
     parser.add_argument(
+        "--num-ctx",
+        type=int,
+        default=None,
+        help=(
+            "Context window requested from Ollama (default: "
+            "$SEACODE_NUM_CTX, seacode.toml, or 16384; the runtime "
+            "default of 4096 is too small for the system prompt)"
+        ),
+    )
+    parser.add_argument(
         "--context-tokens",
         type=int,
         default=None,
@@ -363,6 +373,13 @@ def apply_common_options(args) -> tuple:
             getattr(args, "context_tokens", None), config
         )
     )
+
+    # Generation options for the local runtime: a real context
+    # window instead of Ollama's 4096 default.
+    num_ctx = providers_module.resolve_num_ctx(
+        getattr(args, "num_ctx", None), config
+    )
+    seacode_module.set_model_options({"num_ctx": num_ctx})
 
     # Hooks from seacode.toml's [hooks] table, and MCP servers from
     # .mcp.json (their tools register as dynamic tools). Starting MCP

@@ -32,6 +32,7 @@ KNOWN_KEYS = (
     "api_key",
     "max_tools",
     "context_tokens",
+    "num_ctx",
     "trust",
     "theme",
     "extra_commands",
@@ -48,6 +49,7 @@ DEFAULT_CONFIG_TEXT = """\
 # api_key = "..."  # only for provider = "openai"; prefer $SEACODE_API_KEY
 # max_tools = 10
 # context_tokens = 16000  # wire budget; older history is trimmed, not lost
+# num_ctx = 16384  # window requested from Ollama (its default is only 4096)
 # trust = "ask"  # ask | edits | all
 # theme = "abyss"  # TUI theme: abyss | kelp | coral | mono
 # extra_commands = []  # appended to the run_command allowlist

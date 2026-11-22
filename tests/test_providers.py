@@ -123,6 +123,35 @@ class ResolveBaseUrlTests(unittest.TestCase):
             )
 
 
+class ResolveNumCtxTests(unittest.TestCase):
+
+    def test_precedence_and_default(self):
+        with patch.dict(os.environ):
+            os.environ.pop("SEACODE_NUM_CTX", None)
+            self.assertEqual(
+                providers_module.resolve_num_ctx(),
+                providers_module.DEFAULT_NUM_CTX,
+            )
+            self.assertEqual(
+                providers_module.resolve_num_ctx(
+                    None, {"num_ctx": 8192}
+                ),
+                8192,
+            )
+        with patch.dict(os.environ, {"SEACODE_NUM_CTX": "32768"}):
+            self.assertEqual(providers_module.resolve_num_ctx(), 32768)
+            self.assertEqual(
+                providers_module.resolve_num_ctx(4096), 4096
+            )
+
+    def test_bad_values_fall_back(self):
+        with patch.dict(os.environ, {"SEACODE_NUM_CTX": "lots"}):
+            self.assertEqual(
+                providers_module.resolve_num_ctx(),
+                providers_module.DEFAULT_NUM_CTX,
+            )
+
+
 class BuildClientTests(unittest.TestCase):
 
     def test_ollama_client(self):
@@ -270,6 +299,32 @@ class OpenAIClientTests(unittest.TestCase):
         self.assertEqual(
             message["tool_calls"][0]["function"]["arguments"], '{"a": 1}'
         )
+
+
+class ModelOptionsTests(unittest.TestCase):
+
+    def tearDown(self):
+        seacode_module.set_model_options({})
+
+    def test_num_ctx_sent_to_ollama_style_client(self):
+        seen = {}
+
+        def chat(model, messages, **kwargs):
+            seen.update(kwargs)
+            return SimpleNamespace(
+                message=SimpleNamespace(content="done")
+            )
+
+        seacode_module.set_model_options({"num_ctx": 16384})
+        messages = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "hello"},
+        ]
+        with patch.object(seacode_module.client, "chat",
+                          side_effect=chat):
+            answer = seacode_module.run_agent(messages)
+        self.assertEqual(answer, "done")
+        self.assertEqual(seen.get("options"), {"num_ctx": 16384})
 
 
 class ProviderConfigAndCliTests(unittest.TestCase):

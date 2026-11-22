@@ -31,6 +31,10 @@ PROVIDERS = ("ollama", "openai")
 OLLAMA_DEFAULT_HOST = "http://127.0.0.1:11434"
 OPENAI_DEFAULT_HOST = "https://api.openai.com/v1"
 
+# Window requested from Ollama by default. The runtime's own default
+# (4096) leaves almost no working room after the system prompt.
+DEFAULT_NUM_CTX = 16384
+
 
 def _string_param(description):
     return {"type": "string", "description": description}
@@ -186,6 +190,31 @@ def resolve_base_url(cli_value=None, config=None, provider="ollama"):
         return OPENAI_DEFAULT_HOST
 
     return OLLAMA_DEFAULT_HOST
+
+
+def resolve_num_ctx(cli_value=None, config=None):
+    """Context window to request from the local runtime: CLI flag,
+    then SEACODE_NUM_CTX, then seacode.toml's num_ctx, then
+    DEFAULT_NUM_CTX. Ollama otherwise loads models with a 4096-token
+    window, which the system prompt alone nearly fills."""
+
+    for value in (
+        cli_value,
+        os.environ.get("SEACODE_NUM_CTX"),
+        config.get("num_ctx") if isinstance(config, dict) else None,
+    ):
+        if value is None:
+            continue
+
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            continue
+
+        if parsed > 0:
+            return parsed
+
+    return DEFAULT_NUM_CTX
 
 
 def build_client(provider=None, host=None, api_key=None, config=None):
