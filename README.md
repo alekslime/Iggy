@@ -38,6 +38,8 @@ seacode undo               # restore the most recently backed-up file
 seacode undo notes.txt     # restore one file's most recent backup
 seacode undo --list        # list available backups
 seacode sessions           # list saved conversation sessions
+seacode models             # list local Ollama models (--pull MODEL)
+seacode eval               # benchmark a local model on canned tasks
 seacode mcp                # list MCP servers/tools from .mcp.json
 seacode init               # write a starter seacode.toml in the project
 seacode --version
@@ -53,6 +55,7 @@ Options (REPL and TUI):
 | `--api-key` | `SEACODE_API_KEY` / `OPENAI_API_KEY` | — | key for `--provider openai` |
 | `--max-tools` | `SEACODE_MAX_TOOLS` | `10` | tool calls allowed per turn |
 | `--context-tokens` | `SEACODE_CONTEXT_TOKENS` | `16000` | wire context budget (see below) |
+| `--num-ctx` | `SEACODE_NUM_CTX` | `16384` | window requested from Ollama (its own default is only 4096) |
 | `--trust` | `SEACODE_TRUST` | `ask` | `ask`, `edits`, or `all` |
 | `--yes` | — | off | shorthand for `--trust all` |
 | `--resume [ID]` | — | off | resume latest (or matching) session |
@@ -98,6 +101,23 @@ SEACODE_API_KEY=sk-... seacode repl --provider openai --model gpt-5.2 \
 Both providers use native function calling; models that ignore it
 still work through the plain-text/legacy-JSON fallback in the agent
 loop.
+
+SeaCode is built for local models first: Ollama is asked for a real
+context window (`--num-ctx`, since its 4096 default nearly fits the
+system prompt alone), models of 7B or smaller get a compact system
+prompt (same rules, a third of the tokens), and per-model profiles
+can tune generation:
+
+```toml
+[models."qwen2.5-coder:3b"]
+num_ctx = 8192
+temperature = 0.2
+```
+
+`seacode models` lists what you have pulled; `seacode eval` runs
+four canned tasks (typo fix, failing test, create file, explain)
+through the real agent loop and scores them mechanically, so you
+can compare local models on evidence instead of vibes.
 
 ## Project instructions and context
 
