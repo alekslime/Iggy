@@ -224,6 +224,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sessions.set_defaults(func=run_sessions)
 
+    eval_cmd = subparsers.add_parser(
+        "eval",
+        help="Benchmark a local model on canned tasks (live).",
+    )
+    eval_cmd.add_argument("--model", default=None)
+    eval_cmd.add_argument(
+        "--task", default=None, metavar="ID",
+        help="Run only this task id (see: seacode eval --task x).",
+    )
+    eval_cmd.add_argument(
+        "--provider", choices=providers_module.PROVIDERS, default=None
+    )
+    eval_cmd.add_argument("--host", default=None)
+    eval_cmd.add_argument("--api-key", default=None)
+    eval_cmd.add_argument("--num-ctx", type=int, default=None)
+    eval_cmd.set_defaults(func=run_eval_command)
+
     models_cmd = subparsers.add_parser(
         "models",
         help="List local (Ollama) models, or pull one with --pull.",
@@ -587,6 +604,50 @@ def format_model_list(models) -> list:
         lines.append(f"  {name}  ({size_text})")
 
     return lines
+
+
+def run_eval_command(args) -> int:
+    import seacode.evals as evals_module
+
+    provider = providers_module.resolve_provider(
+        getattr(args, "provider", None), None
+    )
+    host = providers_module.resolve_base_url(
+        getattr(args, "host", None), None, provider
+    )
+    seacode_module.client = providers_module.build_client(
+        provider,
+        host=host,
+        api_key=providers_module.resolve_api_key(
+            getattr(args, "api_key", None), None
+        ),
+    )
+    seacode_module.set_model_options({
+        "num_ctx": providers_module.resolve_num_ctx(
+            getattr(args, "num_ctx", None), None
+        )
+    })
+
+    model = seacode_module.resolve_model(
+        getattr(args, "model", None), None
+    )
+    task_ids = [args.task] if getattr(args, "task", None) else None
+
+    print(f"Evaluating {model} via {provider} ...")
+    results = evals_module.run_eval(model=model, task_ids=task_ids)
+
+    passed = 0
+
+    for result in results:
+        mark = "PASS" if result["passed"] else "FAIL"
+        passed += result["passed"]
+        print(
+            f"  [{mark}] {result['id']:<14} "
+            f"{result['seconds']:>6.1f}s  {result['title']}"
+        )
+
+    print(f"{passed}/{len(results)} tasks passed.")
+    return 0 if passed == len(results) else 1
 
 
 def run_models(args) -> int:
