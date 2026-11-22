@@ -1323,7 +1323,18 @@ class SeaCodeApp(App):
             return
 
         style_key = classify_line(line)
-        self.feed.write(Text(line, style=STYLE_MAP[style_key]))
+
+        # Tool calls open a visual block: a blank separator plus a
+        # left rule so a tool call, its result, and its diff read as
+        # one unit when scrolling back.
+        if style_key == "tool":
+            self.feed.write(Text(""))
+            self.feed.write(
+                Text(f"▎{line}", style=STYLE_MAP[style_key])
+            )
+        else:
+            self.feed.write(Text(line, style=STYLE_MAP[style_key]))
+
         self.maybe_show_diff(line)
 
     def _should_suppress(self, line: str) -> bool:

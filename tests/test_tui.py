@@ -226,6 +226,28 @@ class SplashFitTests(unittest.TestCase):
         asyncio.run(run())
 
 
+class ToolBlockTests(unittest.TestCase):
+    """Tool calls open a ruled block in the feed."""
+
+    def test_tool_line_gets_rule_and_separator(self):
+        async def run():
+            app = SeaCodeApp()
+            async with app.run_test(size=(80, 30)) as pilot:
+                await pilot.pause()
+                app.chatting = True
+                await pilot.pause()
+                feed = app.query_one("#feed", RichLog)
+                before = len(feed.lines)
+                app.handle_agent_line("● read_file agent.py")
+                await pilot.pause()
+                self.assertEqual(len(feed.lines) - before, 2)
+                last = str(feed.lines[-1].text)
+                self.assertIn("▎", last)
+                self.assertIn("read_file", last)
+
+        asyncio.run(run())
+
+
 class ThemeTests(unittest.TestCase):
 
     def test_invalid_theme_falls_back(self):
