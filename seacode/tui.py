@@ -52,6 +52,7 @@ from textual.reactive import reactive
 from textual.widgets import Input, RichLog, Static
 
 import seacode.agent as seacode_module
+import seacode.context as context_module
 import seacode.sessions as sessions_module
 import seacode.tools as tools_module
 from seacode import __version__ as VERSION
@@ -143,7 +144,7 @@ class _PermissionBridge:
     def __init__(self, app: "SeaCodeApp"):
         self._app = app
 
-    def request(self, action: str) -> bool:
+    def request(self, action: str, diff: str | None = None) -> bool:
         # Scout mode is read-only: decline every mutating action
         # automatically, without ever blocking the worker thread on an
         # interactive prompt. This is the only place that needs to know
@@ -162,6 +163,10 @@ class _PermissionBridge:
             self._app.call_from_thread(
                 self._app.note_auto_approved_action, action
             )
+            if diff:
+                self._app.call_from_thread(
+                    self._app.show_permission_diff, diff
+                )
             return True
 
         event = threading.Event()
@@ -172,7 +177,7 @@ class _PermissionBridge:
             event.set()
 
         self._app.call_from_thread(
-            self._app.show_permission_prompt, action, on_answer
+            self._app.show_permission_prompt, action, on_answer, diff
         )
         event.wait()
 
@@ -217,7 +222,8 @@ SLASH_HELP = (
     "/help            show this list\n"
     "/undo [path]     restore a file from its most recent backup\n"
     "/sessions        list saved conversation sessions\n"
-    "/model [name]    show or switch the Ollama model\n"
+    "/model [name]    show or switch the model\n"
+    "/tools           list built-in, MCP and subagent tools\n"
     "/scout           read-only mode (auto-deny modifications)\n"
     "/operate         normal mode (prompt for modifications)\n"
     "/clear           clear the feed"
@@ -489,10 +495,20 @@ class SeaCodeApp(App):
         self._tip = random.choice(TIPS)
 
         if initial_messages is not None:
-            self.messages = initial_messages
+            self.messages = context_module.fresh_messages(
+                initial_messages,
+                seacode_module.SYSTEM_PROMPT,
+                tools_module.get_project_root(),
+            )
         else:
             self.messages = [
-                {"role": "system", "content": seacode_module.SYSTEM_PROMPT}
+                {
+                    "role": "system",
+                    "content": context_module.build_system_prompt(
+                        seacode_module.SYSTEM_PROMPT,
+                        tools_module.get_project_root(),
+                    ),
+                }
             ]
         self._permission_bridge = _PermissionBridge(self)
         self._permission_callback = None
@@ -805,7 +821,11 @@ class SeaCodeApp(App):
             )
             return True
 
-        self.messages = session["messages"]
+        self.messages = context_module.fresh_messages(
+            session["messages"],
+            seacode_module.SYSTEM_PROMPT,
+            tools_module.get_project_root(),
+        )
         self._session_id = session["id"]
         self._turns = session.get("turns", 0)
         self.chatting = True
@@ -848,6 +868,11 @@ class SeaCodeApp(App):
             self.mode = "operate"
         elif name == "model":
             self._slash_model(arg)
+        elif name == "tools":
+            names = sorted(seacode_module.known_tool_names())
+            self.feed.write(
+                Text("Tools: " + ", ".join(names), style="#d0d5db")
+            )
         elif name == "sessions":
             self._slash_sessions()
         elif name == "undo":
@@ -1287,6 +1312,14 @@ class SeaCodeApp(App):
             )
         )
 
+        self._write_diff_lines(diff_text)
+
+        self.feed.write(
+            Text(f"  ↩ /undo {path} to revert", style="grey50")
+        )
+
+    def _write_diff_lines(self, diff_text: str) -> None:
+        lines = diff_text.splitlines()
         shown = "\n".join(lines[: self.MAX_INLINE_DIFF_LINES])
 
         try:
@@ -1316,17 +1349,23 @@ class SeaCodeApp(App):
                 )
             )
 
-        self.feed.write(
-            Text(f"  ↩ /undo {path} to revert", style="grey50")
-        )
+    def show_permission_diff(self, diff: str) -> None:
+        """Render a proposed change in the feed before approval, so the
+        y/N answer is about the actual edit, not just a filename."""
+
+        self.feed.write(Text("  Proposed change:", style="grey50"))
+        self._write_diff_lines(diff)
 
     # -------------------------------------------------------------
     # permission prompt
     # -------------------------------------------------------------
 
-    def show_permission_prompt(self, action: str, callback) -> None:
+    def show_permission_prompt(self, action: str, callback, diff=None) -> None:
         self._permission_callback = callback
         self.awaiting_permission = True
+
+        if diff:
+            self.show_permission_diff(diff)
 
         self.query_one("#prompt-label", Static).update(
             f"SeaCode needs permission to: {action}   [y/N]:"
