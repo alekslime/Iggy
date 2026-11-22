@@ -11,7 +11,7 @@ Run with:  python3 -m pytest tests/test_art.py -v
 
 import unittest
 
-from seacode.art import MASCOT, dither_rule, side_column
+from seacode.art import MASCOT, dither_rule, side_column, wave_rule
 
 
 class MascotTests(unittest.TestCase):
@@ -65,6 +65,25 @@ class DitherRuleTests(unittest.TestCase):
         for phase in range(8):
             rule = dither_rule(64, phase)
             self.assertEqual(rule, rule[::-1])
+
+
+class WaveRuleTests(unittest.TestCase):
+
+    def test_exact_width_and_glyphs(self):
+        rule = wave_rule(64)
+        self.assertEqual(len(rule), 64)
+        for char in rule:
+            self.assertIn(char, " ∼≈~")
+
+    def test_edges_fade_to_space(self):
+        rule = wave_rule(64)
+        self.assertEqual(rule[0], " ")
+        self.assertEqual(rule[-1], " ")
+        self.assertIn("≈", rule)
+
+    def test_phase_drifts(self):
+        self.assertNotEqual(wave_rule(64, 0), wave_rule(64, 1))
+        self.assertEqual(wave_rule(64, 0), wave_rule(64, 0))
 
 
 class SideColumnTests(unittest.TestCase):

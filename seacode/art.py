@@ -68,6 +68,38 @@ def dither_rule(width: int, phase: int = 0) -> str:
     return "".join(chars)
 
 
+def wave_rule(width: int, phase: int = 0) -> str:
+    """One row of sea waves (∼≈~) fading out at both edges.
+
+    Replaces the blocky dither strip under the splash input: same
+    symmetric-fade idea, but unmistakably water. Glyph choice is a
+    pure function of position + phase so frames drift (period 12).
+    Edge characters fade to spaces so the row melts into the
+    background instead of ending in hard blocks.
+    """
+
+    width = max(int(width), 1)
+    glyphs = "∼≈~"
+    chars = []
+
+    for x in range(width):
+        # Fade in/out over the outer quarter on each side.
+        edge_distance = min(x, width - 1 - x)
+        fade_span = max(width // 4, 1)
+
+        if edge_distance == 0:
+            chars.append(" ")
+            continue
+
+        if edge_distance < fade_span and (edge_distance + phase) % 3 == 0:
+            chars.append(" ")
+            continue
+
+        chars.append(glyphs[(x + phase) % len(glyphs)])
+
+    return "".join(chars)
+
+
 FISH_RIGHT = ("><>", "><")
 FISH_LEFT = ("<><", "<>")
 

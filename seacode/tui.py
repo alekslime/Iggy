@@ -57,7 +57,7 @@ import seacode.sessions as sessions_module
 import seacode.tools as tools_module
 from seacode import __version__ as VERSION
 from seacode import permissions as permissions_module
-from seacode.art import MASCOT, dither_rule, side_column
+from seacode.art import MASCOT, wave_rule, side_column
 
 LOGO = (
     "█▀▀█ ▀█▀▀█   ▀▀▄  █▀▀█ █▀▀█ ▀█▀▀█ ▀█▀▀█\n"
@@ -391,7 +391,7 @@ class SeaCodeApp(App):
     .dither-rule {
         width: 64;
         height: 1;
-        color: #2b3648;
+        color: #2e6b85;
         margin-top: 1;
         margin-bottom: 1;
     }
@@ -548,7 +548,7 @@ class SeaCodeApp(App):
                 yield Static("", id="splash-tip")
             with Center():
                 yield Static(
-                    dither_rule(64),
+                    wave_rule(64),
                     classes="dither-rule",
                     id="splash-rule",
                 )
@@ -960,7 +960,7 @@ class SeaCodeApp(App):
 
         self._art_phase += 1
         self.query_one("#splash-rule", Static).update(
-            dither_rule(64, self._art_phase)
+            wave_rule(64, self._art_phase)
         )
         self.query_one("#mascot", Static).styles.color = MASCOT_PULSE[
             self._art_phase % len(MASCOT_PULSE)
