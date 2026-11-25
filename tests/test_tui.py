@@ -23,12 +23,18 @@ from seacode.tui import (
     SeaCodeApp,
     classify_line,
     context_meter,
+    mascot_pulse,
     max_recents_for_height,
     parse_slash_command,
     splash_mode,
 )
 from textual.containers import Horizontal
 from textual.widgets import Input, RichLog, Static
+
+# Mosaic strips: beside the mascot, and beside the input stack below.
+SEA_STRIPS = (
+    "#sea-left", "#sea-right", "#sea-bottom-left", "#sea-bottom-right",
+)
 
 
 class TuiModelTests(unittest.TestCase):
@@ -417,8 +423,39 @@ class MaxRecentsTests(unittest.TestCase):
         self.assertEqual(max_recents_for_height(70, True), 5)
 
 
+class MascotPulseTests(unittest.TestCase):
+
+    def test_pulse_is_derived_from_theme_color(self):
+        operate = mascot_pulse("#4f9de8", "operate")
+        scout = mascot_pulse("#4f9de8", "scout")
+
+        self.assertEqual(len(operate), 4)
+        self.assertEqual(operate[0], "#4f9de8")
+        self.assertNotEqual(operate, scout)
+        # Default theme's seahorse is blue: blue channel dominates.
+        for color in operate + scout:
+            r, g, b = (int(color[i:i + 2], 16) for i in (1, 3, 5))
+            self.assertGreater(b, r)
+
+
 class SplashAnimationTests(unittest.TestCase):
     """The splash shimmers until a chat starts (or --no-anim)."""
+
+    def test_bottom_strips_flank_the_input_stack(self):
+        async def run():
+            app = SeaCodeApp()
+            async with app.run_test(size=(140, 45)) as pilot:
+                await pilot.pause()
+                left = app.query_one("#sea-bottom-left").region
+                right = app.query_one("#sea-bottom-right").region
+                inp = app.query_one("#splash-input").region
+
+                self.assertGreater(left.width, 0)
+                self.assertGreater(right.width, 0)
+                self.assertLessEqual(left.right, inp.x)
+                self.assertGreaterEqual(right.x, inp.right)
+
+        asyncio.run(run())
 
     def rule_text(self, app):
         return str(app.query_one("#splash-rule", Static).render())
@@ -436,16 +473,14 @@ class SplashAnimationTests(unittest.TestCase):
                     str(
                         app.query_one(widget_id, Static).render()
                     )
-                    for widget_id in ("#sea-left", "#sea-right")
+                    for widget_id in SEA_STRIPS
                 ]
                 app._tick_art()
                 await pilot.pause()
                 self.assertEqual(app._art_phase, phase + 1)
                 self.assertNotEqual(self.rule_text(app), before)
 
-                for widget_id, previous in zip(
-                    ("#sea-left", "#sea-right"), seas_before
-                ):
+                for widget_id, previous in zip(SEA_STRIPS, seas_before):
                     self.assertNotEqual(
                         str(
                             app.query_one(widget_id, Static).render()

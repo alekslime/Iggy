@@ -57,7 +57,13 @@ import seacode.sessions as sessions_module
 import seacode.tools as tools_module
 from seacode import __version__ as VERSION
 from seacode import permissions as permissions_module
-from seacode.art import MASCOT, mosaic_palette, sea_runs, wave_rule
+from seacode.art import (
+    MASCOT,
+    blend_hex,
+    mosaic_palette,
+    sea_runs,
+    wave_rule,
+)
 
 LOGO = (
     "█▀▀█ ▀█▀▀█   ▀▀▄  █▀▀█ █▀▀█ ▀█▀▀█ ▀█▀▀█\n"
@@ -72,14 +78,23 @@ LOGO = (
 # The timer stops the moment a chat starts, so nothing moves behind
 # the user.
 ART_TICK_SECONDS = 0.15
-MASCOT_PULSE = ("#4caf78", "#5cc68a", "#4caf78", "#3d8f61")
 
-# The mascot breathes in the mode's key: calm bright mint in Scout
-# (read-only), the classic greens in Operate.
-MASCOT_PULSE_BY_MODE = {
-    "operate": MASCOT_PULSE,
-    "scout": ("#5cc68a", "#8bf0b3", "#5cc68a", "#4caf78"),
-}
+
+def mascot_pulse(base: str, mode: str = "operate") -> tuple:
+    """Four-step breathing cycle for the mascot, derived from the
+    theme's mascot color so every theme tints it: the classic
+    deeper/brighter swing in Operate, a calmer brighter cycle in
+    Scout (read-only)."""
+
+    soft = blend_hex(base, "#ffffff", 0.15)
+    bright = blend_hex(base, "#ffffff", 0.40)
+    deep = blend_hex(base, "#000000", 0.15)
+
+    if mode == "scout":
+        return (soft, bright, soft, base)
+
+    return (base, soft, base, deep)
+
 
 WORKING_INDICATOR = "><((°> working…"
 
@@ -89,7 +104,7 @@ WORKING_INDICATOR = "><((°> working…"
 THEMES = {
     "abyss": {
         "bg": "#0b0e14", "panel": "#10141d", "accent": "#7dd3fc",
-        "mascot": "#4caf78", "logo": "#e8eaed",
+        "mascot": "#4f9de8", "logo": "#e8eaed",
     },
     "kelp": {
         "bg": "#07130d", "panel": "#0c1f15", "accent": "#7be3a2",
@@ -430,6 +445,19 @@ class SeaCodeApp(App):
         width: 1fr;
         color: #2e6b85;
     }
+    #splash-bottom {
+        width: 1fr;
+        height: 1fr;
+    }
+    #sea-bottom-left, #sea-bottom-right {
+        width: 1fr;
+        height: 100%;
+        color: #2e6b85;
+    }
+    #splash-lower {
+        width: 64;
+        height: auto;
+    }
     #splash-mascot {
         width: auto;
         height: auto;
@@ -437,7 +465,7 @@ class SeaCodeApp(App):
     #mascot {
         width: auto;
         height: auto;
-        color: #4caf78;
+        color: #4f9de8;
         text-align: left;
     }
     #logo {
@@ -640,30 +668,36 @@ class SeaCodeApp(App):
                 yield Static("", id="sea-right")
             with Center():
                 yield Static(LOGO, id="logo")
-            with Center():
-                yield Input(
-                    placeholder='Ask anything... e.g. "delete example.txt"',
-                    id="splash-input",
-                )
-            with Center():
-                yield Static("", id="splash-status")
-            with Center():
-                yield Static(
-                    "shift+tab scout/operate    ctrl+c quit",
-                    id="splash-hints",
-                )
-            with Center():
-                yield Static("", id="splash-recents")
-            with Center():
-                yield Static("", id="splash-stats")
-            with Center():
-                yield Static("", id="splash-tip")
-            with Center():
-                yield Static(
-                    wave_rule(64),
-                    classes="dither-rule",
-                    id="splash-rule",
-                )
+            with Horizontal(id="splash-bottom"):
+                yield Static("", id="sea-bottom-left")
+                with Vertical(id="splash-lower"):
+                    with Center():
+                        yield Input(
+                            placeholder=(
+                                'Ask anything... e.g. "delete example.txt"'
+                            ),
+                            id="splash-input",
+                        )
+                    with Center():
+                        yield Static("", id="splash-status")
+                    with Center():
+                        yield Static(
+                            "shift+tab scout/operate    ctrl+c quit",
+                            id="splash-hints",
+                        )
+                    with Center():
+                        yield Static("", id="splash-recents")
+                    with Center():
+                        yield Static("", id="splash-stats")
+                    with Center():
+                        yield Static("", id="splash-tip")
+                    with Center():
+                        yield Static(
+                            wave_rule(64),
+                            classes="dither-rule",
+                            id="splash-rule",
+                        )
+                yield Static("", id="sea-bottom-right")
         with Horizontal(id="chat-body", classes="hidden"):
             yield RichLog(
                 id="feed",
@@ -779,6 +813,12 @@ class SeaCodeApp(App):
         for child in splash.children:
             if not child.display:
                 continue
+
+            if child.id == "splash-bottom":
+                # The bottom row is 1fr, so it always "fits"; what
+                # matters is the stack it holds.
+                child = self.query_one("#splash-lower", Vertical)
+
             total += child.outer_size.height
 
         if total > splash.size.height:
@@ -1154,18 +1194,25 @@ class SeaCodeApp(App):
         self.query_one("#splash-rule", Static).update(
             wave_rule(64, self._art_phase)
         )
-        pulse = MASCOT_PULSE_BY_MODE.get(self.mode, MASCOT_PULSE)
+        pulse = mascot_pulse(self._theme["mascot"], self.mode)
         self.query_one("#mascot", Static).styles.color = pulse[
             self._art_phase % len(pulse)
         ]
 
-        height = len(MASCOT.splitlines())
+        mascot_height = len(MASCOT.splitlines())
 
-        for widget_id, seed, direction in (
-            ("#sea-left", 0, 1),
-            ("#sea-right", 3, -1),
+        # (widget, seed, direction, fixed height or None = fill widget)
+        for widget_id, seed, direction, height in (
+            ("#sea-left", 0, 1, mascot_height),
+            ("#sea-right", 3, -1, mascot_height),
+            ("#sea-bottom-left", 5, 1, None),
+            ("#sea-bottom-right", 8, -1, None),
         ):
             strip = self.query_one(widget_id, Static)
+
+            if height is None:
+                height = max(strip.size.height, 1)
+
             strip.update(
                 sea_text(
                     max(strip.size.width, 1),
