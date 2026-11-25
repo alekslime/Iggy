@@ -222,13 +222,20 @@ def _field_drift(tx, ty, t, w, h, seed):
     return base * 0.68 + fine * 0.32
 
 
+# The ripple is the boldest pattern (a full-range sine), so it gets its
+# own pace and ceiling: radians per frame, and the share of full
+# brightness its crests may reach.
+RIPPLE_SPEED = 0.10
+RIPPLE_GAIN = 0.80
+
+
 def _field_ripple(tx, ty, t, w, h, seed):
     """Diagonal bands sweeping across, bent by a little noise."""
 
     warp = value_noise(tx * 0.20, ty * 0.30 + t * 0.05, seed + 2)
-    angle = (tx * 0.55 + ty * 0.85) - t * 0.18 + warp * 3.0
+    angle = (tx * 0.55 + ty * 0.85) - t * RIPPLE_SPEED + warp * 3.0
 
-    return 0.5 + 0.5 * math.sin(angle)
+    return (0.5 + 0.5 * math.sin(angle)) * RIPPLE_GAIN
 
 
 def _field_bloom(tx, ty, t, w, h, seed):

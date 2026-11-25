@@ -23,6 +23,8 @@ from seacode.art import (
     mosaic_frame,
     mosaic_grid,
     _FIELDS,
+    RIPPLE_GAIN,
+    RIPPLE_SPEED,
     _mosaic_sampler,
     mosaic_palette,
     sea_runs,
@@ -289,6 +291,25 @@ def _mix(phase):
     remaining = MOSAIC_MODE_FRAMES - phase % MOSAIC_MODE_FRAMES
 
     return _smooth(1.0 - remaining / MOSAIC_FADE_FRAMES)
+
+
+class RippleTests(unittest.TestCase):
+
+    def test_crests_stay_under_the_gain_ceiling(self):
+        ripple = _FIELDS[1]
+        values = [
+            ripple(tx, ty, t, 30, 20, 0)
+            for tx in range(0, 30, 3)
+            for ty in range(0, 20, 3)
+            for t in range(80, 160, 7)
+        ]
+
+        self.assertLessEqual(max(values), RIPPLE_GAIN + 1e-9)
+        self.assertGreater(max(values), RIPPLE_GAIN * 0.9)
+        self.assertGreaterEqual(min(values), 0.0)
+
+    def test_ripple_is_slower_than_the_original_pace(self):
+        self.assertLess(RIPPLE_SPEED, 0.18)
 
 
 class SharedCanvasTests(unittest.TestCase):
