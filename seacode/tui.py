@@ -147,7 +147,8 @@ def splash_mode(height: int) -> str:
     return "full"
 
 
-def sea_text(width, height, phase, seed, direction, theme) -> Text:
+def sea_text(width, height, phase, seed, direction, theme,
+             origin=(0, 0), canvas=None, field_seed=None) -> Text:
     """One side strip as a colored Rich Text: shifting mosaic tiles in
     the theme's accent, with the fish and bubbles drawn on top (each on
     a cutout of the background so they stay readable over bright
@@ -158,7 +159,8 @@ def sea_text(width, height, phase, seed, direction, theme) -> Text:
     text = Text(no_wrap=True, overflow="crop")
 
     for y, runs in enumerate(
-        sea_runs(width, height, phase, seed, direction)
+        sea_runs(width, height, phase, seed, direction,
+                 origin, canvas, field_seed)
     ):
         if y:
             text.append("\n")
@@ -1216,30 +1218,50 @@ class SeaCodeApp(App):
 
         mascot_height = len(MASCOT.splitlines())
 
-        # (widget, seed, direction, fixed height or None = fill widget)
-        for widget_id, seed, direction, height in (
-            ("#sea-left", 0, 1, mascot_height),
-            ("#sea-right", 3, -1, mascot_height),
-            ("#sea-mid-left", 2, 1, None),
-            ("#sea-mid-right", 6, -1, None),
-            ("#sea-bottom-left", 5, 1, None),
-            ("#sea-bottom-right", 8, -1, None),
-        ):
-            strip = self.query_one(widget_id, Static)
+        # Per side: (field seed, direction, [(widget, creature seed,
+        # fixed height or None = fill widget)]). Strips on one side share
+        # one mosaic canvas so the pattern runs through their seams.
+        sides = (
+            (0, 1, (
+                ("#sea-left", 0, mascot_height),
+                ("#sea-mid-left", 2, None),
+                ("#sea-bottom-left", 5, None),
+            )),
+            (3, -1, (
+                ("#sea-right", 3, mascot_height),
+                ("#sea-mid-right", 6, None),
+                ("#sea-bottom-right", 8, None),
+            )),
+        )
 
-            if height is None:
-                height = max(strip.size.height, 1)
+        for field_seed, direction, strips in sides:
+            widgets = [self.query_one(w, Static) for w, _, _ in strips]
+            canvas_w = max([max(w.size.width, 1) for w in widgets])
+            canvas = (canvas_w, max(self.size.height, 1))
 
-            strip.update(
-                sea_text(
-                    max(strip.size.width, 1),
-                    height,
-                    self._art_phase,
-                    seed,
-                    direction,
-                    self._theme,
+            for widget, (_, seed, height) in zip(widgets, strips):
+                width = max(widget.size.width, 1)
+
+                if height is None:
+                    height = max(widget.size.height, 1)
+
+                # Left strips hug the left edge; right strips hug the
+                # right edge, so their columns line up from the outside.
+                origin_x = 0 if direction > 0 else canvas_w - width
+
+                widget.update(
+                    sea_text(
+                        width,
+                        height,
+                        self._art_phase,
+                        seed,
+                        direction,
+                        self._theme,
+                        (origin_x, widget.region.y),
+                        canvas,
+                        field_seed,
+                    )
                 )
-            )
 
     def _stop_art(self) -> None:
         if self._art_timer is not None:

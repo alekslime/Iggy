@@ -258,6 +258,50 @@ class MosaicGridTests(unittest.TestCase):
                 self.assertIn(char, MOSAIC_GLYPHS)
 
 
+class SharedCanvasTests(unittest.TestCase):
+
+    def test_stacked_strips_match_one_tall_grid(self):
+        # Three strips of different heights/widths, all on one canvas,
+        # must show exactly the cells of a single grid: no seams.
+        for phase in (5, 90, 170):
+            whole = mosaic_grid(40, 30, phase, seed=4)
+            canvas = (40, 30)
+
+            top = mosaic_grid(40, 10, phase, 4, 0, (0, 0), canvas)
+            mid = mosaic_grid(31, 6, phase, 4, 0, (0, 10), canvas)
+            low = mosaic_grid(23, 14, phase, 4, 0, (0, 16), canvas)
+
+            self.assertEqual(top, whole[0:10])
+            self.assertEqual(mid, [r[:31] for r in whole[10:16]])
+            self.assertEqual(low, [r[:23] for r in whole[16:30]])
+
+    def test_right_anchored_strips_align_odd_offsets(self):
+        # An odd column offset must not shift the 2-wide tile grid.
+        whole = mosaic_grid(41, 12, 33, seed=1)
+        right = mosaic_grid(14, 12, 33, 1, 0, (27, 0), (41, 12))
+
+        self.assertEqual(right, [r[27:] for r in whole])
+
+    def test_defaults_unchanged(self):
+        self.assertEqual(
+            mosaic_grid(30, 12, 9, 2),
+            mosaic_grid(30, 12, 9, 2, 0, (0, 0), None),
+        )
+
+    def test_sea_runs_field_seed_leaves_creatures_alone(self):
+        a = sea_runs(30, 25, 12, seed=0, direction=1)
+        b = sea_runs(30, 25, 12, seed=0, direction=1, field_seed=9)
+
+        def creatures(rows):
+            return [
+                [(len(t), k) for t, k in runs if k == CREATURE]
+                for runs in rows
+            ]
+
+        self.assertEqual(creatures(a), creatures(b))
+        self.assertNotEqual(a, b)
+
+
 class SeaRunsTests(unittest.TestCase):
 
     def flatten(self, rows):

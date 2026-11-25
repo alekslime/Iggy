@@ -262,41 +262,63 @@ def _mosaic_value(tx, ty, phase, w, h, seed):
 
 
 def mosaic_grid(width: int, height: int, phase: int = 0, seed: int = 0,
-                fade: int = 0) -> list:
+                fade: int = 0, origin: tuple = (0, 0),
+                canvas: tuple = None) -> list:
     """Shade levels (0..4) for a width x height cell grid.
 
     Cells pair up into 2-wide tiles so each tile is one square-ish
     block. `fade` dims the mosaic toward one side so it melts into the
     mascot instead of crowding it: +1 fades toward the right edge, -1
-    toward the left, 0 leaves it uniform."""
+    toward the left, 0 leaves it uniform.
+
+    `origin` is the (column, row) of this grid's top-left cell inside a
+    larger shared canvas of `canvas` = (columns, rows). Strips that
+    sample the same canvas and seed continue one pattern across their
+    seams instead of each starting a fresh one."""
 
     width = max(int(width), 1)
     height = max(int(height), 1)
+    ox, oy = int(origin[0]), int(origin[1])
     tiles_w = (width + MOSAIC_TILE_W - 1) // MOSAIC_TILE_W
+
+    if canvas is None:
+        field_w, field_h = tiles_w, height
+    else:
+        field_w = max((int(canvas[0]) + MOSAIC_TILE_W - 1)
+                      // MOSAIC_TILE_W, 1)
+        field_h = max(int(canvas[1]), 1)
 
     grid = []
 
     for y in range(height):
         row = []
+        cache = {}
 
-        for tx in range(tiles_w):
-            value = _mosaic_value(tx, y, phase, tiles_w, height, seed)
+        for x in range(width):
+            tx = (ox + x) // MOSAIC_TILE_W
 
-            # Static per-tile grain staggers when each tile flips.
-            grain = (_hash01(tx, y, seed + 7) - 0.5) * 0.30
-            # Push mid values down so level 0 (clear) stays common.
-            value = max(value + grain, 0.0) ** 1.35
+            if tx not in cache:
+                ty = oy + y
+                value = _mosaic_value(tx, ty, phase, field_w, field_h, seed)
 
-            if fade and tiles_w > 1:
-                pos = tx / (tiles_w - 1)
-                edge = pos if fade > 0 else 1.0 - pos
-                # Full strength for the outer 40%, then ramp to clear.
-                value *= 1.0 - _smooth(max(edge - 0.4, 0.0) / 0.6)
+                # Static per-tile grain staggers when each tile flips.
+                grain = (_hash01(tx, ty, seed + 7) - 0.5) * 0.30
+                # Push mid values down so level 0 (clear) stays common.
+                value = max(value + grain, 0.0) ** 1.35
 
-            level = min(int(value * MOSAIC_LEVELS), MOSAIC_LEVELS - 1)
-            row.extend([level] * MOSAIC_TILE_W)
+                if fade and tiles_w > 1:
+                    local = x // MOSAIC_TILE_W
+                    pos = local / (tiles_w - 1)
+                    edge = pos if fade > 0 else 1.0 - pos
+                    # Full strength for the outer 40%, then ramp to clear.
+                    value *= 1.0 - _smooth(max(edge - 0.4, 0.0) / 0.6)
 
-        grid.append(row[:width])
+                cache[tx] = min(int(value * MOSAIC_LEVELS),
+                                MOSAIC_LEVELS - 1)
+
+            row.append(cache[tx])
+
+        grid.append(row)
 
     return grid
 
@@ -312,18 +334,27 @@ def mosaic_frame(width: int, height: int, phase: int = 0, seed: int = 0,
 
 
 def sea_runs(width: int, height: int, phase: int = 0, seed: int = 0,
-             direction: int = 1) -> list:
+             direction: int = 1, origin: tuple = (0, 0),
+             canvas: tuple = None, field_seed: int = None) -> list:
     """Side strip = mosaic backdrop with the existing bubbles and fish
     drawn on top. Returns, per row, a list of (text, kind) runs where
     kind is a shade level 0..4 or CREATURE, so the caller can color
-    each run without this module knowing about any UI library."""
+    each run without this module knowing about any UI library.
+
+    `origin`, `canvas` and `field_seed` place the backdrop inside a
+    mosaic shared with neighbouring strips; the fish and bubbles keep
+    using `seed`, so each strip still has its own creatures."""
 
     width = max(int(width), 1)
     height = max(int(height), 1)
 
     # Left strip (direction +1) sits left of the mascot: fade right.
     fade = 1 if direction > 0 else -1
-    backdrop = mosaic_grid(width, height, phase, seed, fade)
+    backdrop = mosaic_grid(
+        width, height, phase,
+        seed if field_seed is None else field_seed,
+        fade, origin, canvas,
+    )
     overlay = side_column(width, height, phase, seed, direction)
     overlay_rows = overlay.split("\n")
 
