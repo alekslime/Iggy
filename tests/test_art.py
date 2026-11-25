@@ -11,7 +11,23 @@ Run with:  python3 -m pytest tests/test_art.py -v
 
 import unittest
 
-from seacode.art import MASCOT, dither_rule, side_column, wave_rule
+from seacode.art import (
+    CREATURE,
+    MASCOT,
+    MOSAIC_FADE_FRAMES,
+    MOSAIC_GLYPHS,
+    MOSAIC_MODE_FRAMES,
+    MOSAIC_MODES,
+    blend_hex,
+    dither_rule,
+    mosaic_frame,
+    mosaic_grid,
+    mosaic_palette,
+    sea_runs,
+    side_column,
+    value_noise,
+    wave_rule,
+)
 
 
 class MascotTests(unittest.TestCase):
@@ -127,6 +143,175 @@ class SideColumnTests(unittest.TestCase):
         ]
 
         self.assertEqual(len(set(frames)), 3)
+
+
+class ValueNoiseTests(unittest.TestCase):
+
+    def test_range_and_determinism(self):
+        for i in range(200):
+            v = value_noise(i * 0.37, i * 0.11, seed=3)
+            self.assertGreaterEqual(v, 0.0)
+            self.assertLessEqual(v, 1.0)
+            self.assertEqual(v, value_noise(i * 0.37, i * 0.11, seed=3))
+
+    def test_smooth_between_neighbours(self):
+        a = value_noise(5.00, 2.0)
+        b = value_noise(5.01, 2.0)
+
+        self.assertLess(abs(a - b), 0.05)
+
+
+class MosaicGridTests(unittest.TestCase):
+
+    def test_exact_dimensions_incl_odd_width(self):
+        for width in (1, 2, 7, 30):
+            grid = mosaic_grid(width, 9, phase=5)
+
+            self.assertEqual(len(grid), 9)
+            for row in grid:
+                self.assertEqual(len(row), width)
+
+    def test_levels_in_range(self):
+        for phase in (0, 33, 79, 120):
+            for row in mosaic_grid(30, 12, phase):
+                for level in row:
+                    self.assertIn(level, range(len(MOSAIC_GLYPHS)))
+
+    def test_tiles_are_two_wide(self):
+        for row in mosaic_grid(30, 12, phase=17):
+            for x in range(0, 30, 2):
+                self.assertEqual(row[x], row[x + 1])
+
+    def test_deterministic_and_moving(self):
+        self.assertEqual(
+            mosaic_grid(30, 12, 9, 2), mosaic_grid(30, 12, 9, 2)
+        )
+        self.assertNotEqual(
+            mosaic_grid(30, 12, 9, 2), mosaic_grid(30, 12, 10, 2)
+        )
+        self.assertNotEqual(
+            mosaic_grid(30, 12, 9, 0), mosaic_grid(30, 12, 9, 1)
+        )
+
+    def test_every_pattern_moves_and_uses_range(self):
+        for mode in range(MOSAIC_MODES):
+            base = mode * MOSAIC_MODE_FRAMES + 10
+            a = mosaic_grid(40, 16, base)
+            b = mosaic_grid(40, 16, base + 3)
+
+            self.assertNotEqual(a, b)
+            levels = {level for row in a for level in row}
+            self.assertGreaterEqual(len(levels), 3)
+
+    def test_patterns_differ_from_each_other(self):
+        frames = {
+            str(mosaic_grid(40, 16, m * MOSAIC_MODE_FRAMES + 10))
+            for m in range(MOSAIC_MODES)
+        }
+
+        self.assertEqual(len(frames), MOSAIC_MODES)
+
+    def test_crossfade_is_continuous_across_pattern_boundary(self):
+        # No hard cut: frame-to-frame change around each switch stays
+        # within the range the patterns show on their own. A cut would
+        # flip most of the grid at once.
+        def changed(phase):
+            a = mosaic_grid(40, 16, phase)
+            b = mosaic_grid(40, 16, phase + 1)
+
+            return sum(
+                x != y
+                for ra, rb in zip(a, b)
+                for x, y in zip(ra, rb)
+            )
+
+        everywhere = max(
+            changed(p) for p in range(MOSAIC_MODES * MOSAIC_MODE_FRAMES)
+        )
+        cells = 40 * 16
+
+        for slot in range(1, MOSAIC_MODES):
+            boundary = slot * MOSAIC_MODE_FRAMES
+
+            for phase in range(
+                boundary - MOSAIC_FADE_FRAMES, boundary + 2
+            ):
+                self.assertLessEqual(changed(phase), everywhere)
+                self.assertLess(changed(phase), cells * 0.6)
+
+    def test_fade_clears_the_inner_edge(self):
+        for fade, edge_x in ((1, slice(-4, None)), (-1, slice(0, 4))):
+            grid = mosaic_grid(40, 16, phase=30, fade=fade)
+            edge = sum(level for row in grid for level in row[edge_x])
+            total = sum(level for row in grid for level in row)
+
+            self.assertGreater(total, 0)
+            self.assertEqual(edge, 0)
+
+    def test_frame_text_matches_grid(self):
+        rows = mosaic_frame(20, 6, 4).split("\n")
+
+        self.assertEqual(len(rows), 6)
+        for row in rows:
+            self.assertLessEqual(len(row), 20)
+            for char in row:
+                self.assertIn(char, MOSAIC_GLYPHS)
+
+
+class SeaRunsTests(unittest.TestCase):
+
+    def flatten(self, rows):
+        return ["".join(text for text, _ in runs) for runs in rows]
+
+    def test_dimensions_and_run_merging(self):
+        rows = sea_runs(30, 25, phase=3)
+
+        self.assertEqual(len(rows), 25)
+        for runs in rows:
+            self.assertEqual(sum(len(t) for t, _ in runs), 30)
+            for (_, k1), (_, k2) in zip(runs, runs[1:]):
+                self.assertNotEqual(k1, k2)
+
+    def test_creatures_overlay_the_mosaic(self):
+        overlay = side_column(30, 25, phase=12, seed=0, direction=1)
+        rows = sea_runs(30, 25, phase=12, seed=0, direction=1)
+
+        for y, line in enumerate(self.flatten(rows)):
+            src = overlay.split("\n")[y]
+
+            for x, char in enumerate(src):
+                if char != " ":
+                    self.assertEqual(line[x], char)
+
+        kinds = {k for runs in rows for _, k in runs}
+        self.assertIn(CREATURE, kinds)
+
+    def test_animates_and_mirrors_direction(self):
+        self.assertNotEqual(
+            sea_runs(30, 25, 4), sea_runs(30, 25, 5)
+        )
+        self.assertNotEqual(
+            sea_runs(30, 25, 4, 0, 1), sea_runs(30, 25, 4, 0, -1)
+        )
+
+    def test_tiny_sizes_dont_crash(self):
+        self.assertEqual(len(sea_runs(1, 1, 0)), 1)
+
+
+class PaletteTests(unittest.TestCase):
+
+    def test_blend_endpoints_and_midpoint(self):
+        self.assertEqual(blend_hex("#000000", "#ffffff", 0), "#000000")
+        self.assertEqual(blend_hex("#000000", "#ffffff", 1), "#ffffff")
+        self.assertEqual(blend_hex("#000000", "#ffffff", 0.5), "#808080")
+
+    def test_palette_shape(self):
+        palette = mosaic_palette("#0b0e14", "#7dd3fc")
+
+        self.assertEqual(len(palette), len(MOSAIC_GLYPHS) + 1)
+        self.assertEqual(palette[0], "#0b0e14")
+        for color in palette:
+            self.assertRegex(color, r"^#[0-9a-f]{6}$")
 
 
 if __name__ == "__main__":

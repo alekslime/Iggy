@@ -57,7 +57,7 @@ import seacode.sessions as sessions_module
 import seacode.tools as tools_module
 from seacode import __version__ as VERSION
 from seacode import permissions as permissions_module
-from seacode.art import MASCOT, wave_rule, side_column
+from seacode.art import MASCOT, mosaic_palette, sea_runs, wave_rule
 
 LOGO = (
     "█▀▀█ ▀█▀▀█   ▀▀▄  █▀▀█ █▀▀█ ▀█▀▀█ ▀█▀▀█\n"
@@ -66,9 +66,11 @@ LOGO = (
     "▀▀▀▀ ▀▀▀▀▀ ▀▀  ▀ ▀▀▀▀▀ ▀▀▀▀ ▀▀▀▀▀ ▀▀▀▀▀"
 )
 
-# Splash idle animation: the dither rule shimmers through scatter
-# phases while the mascot breathes through green shades. The timer
-# stops the moment a chat starts, so nothing moves behind the user.
+# Splash idle animation: the wave rule drifts, the mascot breathes
+# through green shades, and the side strips run a shifting block
+# mosaic (see seacode.art) with fish and bubbles swimming over it.
+# The timer stops the moment a chat starts, so nothing moves behind
+# the user.
 ART_TICK_SECONDS = 0.15
 MASCOT_PULSE = ("#4caf78", "#5cc68a", "#4caf78", "#3d8f61")
 
@@ -128,6 +130,33 @@ def splash_mode(height: int) -> str:
         return "standard"
 
     return "full"
+
+
+def sea_text(width, height, phase, seed, direction, theme) -> Text:
+    """One side strip as a colored Rich Text: shifting mosaic tiles in
+    the theme's accent, with the fish and bubbles drawn on top (each on
+    a cutout of the background so they stay readable over bright
+    tiles)."""
+
+    palette = mosaic_palette(theme["bg"], theme["accent"])
+    creature_style = f"bold {palette[-1]} on {theme['bg']}"
+    text = Text(no_wrap=True, overflow="crop")
+
+    for y, runs in enumerate(
+        sea_runs(width, height, phase, seed, direction)
+    ):
+        if y:
+            text.append("\n")
+
+        for chunk, kind in runs:
+            if kind == 0:
+                text.append(chunk)
+            elif kind == len(palette) - 1:
+                text.append(chunk, style=creature_style)
+            else:
+                text.append(chunk, style=palette[kind])
+
+    return text
 
 
 def context_meter(messages, limit_tokens) -> str:
@@ -1138,12 +1167,13 @@ class SeaCodeApp(App):
         ):
             strip = self.query_one(widget_id, Static)
             strip.update(
-                side_column(
+                sea_text(
                     max(strip.size.width, 1),
                     height,
                     self._art_phase,
                     seed,
                     direction,
+                    self._theme,
                 )
             )
 
