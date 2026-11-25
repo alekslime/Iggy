@@ -33,7 +33,8 @@ from textual.widgets import Input, RichLog, Static
 
 # Mosaic strips: beside the mascot, and beside the input stack below.
 SEA_STRIPS = (
-    "#sea-left", "#sea-right", "#sea-bottom-left", "#sea-bottom-right",
+    "#sea-left", "#sea-right", "#sea-mid-left", "#sea-mid-right",
+    "#sea-bottom-left", "#sea-bottom-right",
 )
 
 
@@ -454,6 +455,24 @@ class SplashAnimationTests(unittest.TestCase):
                 self.assertGreater(right.width, 0)
                 self.assertLessEqual(left.right, inp.x)
                 self.assertGreaterEqual(right.x, inp.right)
+
+        asyncio.run(run())
+
+    def test_no_unfilled_band_between_strips(self):
+        async def run():
+            for size in ((140, 45), (100, 30), (80, 24)):
+                app = SeaCodeApp()
+                async with app.run_test(size=size) as pilot:
+                    await pilot.pause()
+                    top = app.query_one("#sea-left").region
+                    mid = app.query_one("#sea-mid-left").region
+                    bottom = app.query_one("#sea-bottom-left").region
+                    logo = app.query_one("#logo").region
+
+                    self.assertGreater(mid.width, 0)
+                    self.assertEqual(mid.y, top.bottom)
+                    self.assertEqual(bottom.y, mid.bottom)
+                    self.assertGreaterEqual(mid.bottom, logo.bottom)
 
         asyncio.run(run())
 

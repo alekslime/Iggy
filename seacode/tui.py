@@ -439,7 +439,20 @@ class SeaCodeApp(App):
     #splash-top {
         width: 1fr;
         height: auto;
-        margin-bottom: 1;
+    }
+    #splash-mid {
+        width: 1fr;
+        height: auto;
+    }
+    #splash-logo {
+        width: auto;
+        height: auto;
+        margin: 1 0;
+    }
+    #sea-mid-left, #sea-mid-right {
+        width: 1fr;
+        height: 100%;
+        color: #2e6b85;
     }
     #sea-left, #sea-right {
         width: 1fr;
@@ -473,7 +486,6 @@ class SeaCodeApp(App):
         color: #e8eaed;
         text-style: bold;
         text-align: left;
-        margin-bottom: 1;
     }
     #splash-input {
         width: 64;
@@ -666,8 +678,11 @@ class SeaCodeApp(App):
                 with Vertical(id="splash-mascot"):
                     yield Static(MASCOT, id="mascot")
                 yield Static("", id="sea-right")
-            with Center():
-                yield Static(LOGO, id="logo")
+            with Horizontal(id="splash-mid"):
+                yield Static("", id="sea-mid-left")
+                with Vertical(id="splash-logo"):
+                    yield Static(LOGO, id="logo")
+                yield Static("", id="sea-mid-right")
             with Horizontal(id="splash-bottom"):
                 yield Static("", id="sea-bottom-left")
                 with Vertical(id="splash-lower"):
@@ -1205,6 +1220,8 @@ class SeaCodeApp(App):
         for widget_id, seed, direction, height in (
             ("#sea-left", 0, 1, mascot_height),
             ("#sea-right", 3, -1, mascot_height),
+            ("#sea-mid-left", 2, 1, None),
+            ("#sea-mid-right", 6, -1, None),
             ("#sea-bottom-left", 5, 1, None),
             ("#sea-bottom-right", 8, -1, None),
         ):
