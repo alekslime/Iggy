@@ -47,6 +47,7 @@ from rich.text import Text
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual.content import Content, Span
 from textual.containers import Center, Horizontal, Vertical
 from textual.reactive import reactive
 from textual.widgets import Input, RichLog, Static
@@ -148,32 +149,39 @@ def splash_mode(height: int) -> str:
 
 
 def sea_text(width, height, phase, seed, direction, theme,
-             origin=(0, 0), canvas=None, field_seed=None) -> Text:
-    """One side strip as a colored Rich Text: shifting mosaic tiles in
-    the theme's accent, with the fish and bubbles drawn on top (each on
-    a cutout of the background so they stay readable over bright
-    tiles)."""
+             origin=(0, 0), canvas=None, field_seed=None) -> Content:
+    """One side strip as colored Textual Content: shifting mosaic tiles
+    in the theme's accent, with the fish and bubbles drawn on top (each
+    on a cutout of the background so they stay readable over bright
+    tiles). Built directly as Content, since converting a Rich Text of
+    thousands of spans every frame was the second-biggest cost."""
 
     palette = mosaic_palette(theme["bg"], theme["accent"])
-    creature_style = f"bold {palette[-1]} on {theme['bg']}"
-    text = Text(no_wrap=True, overflow="crop")
+    creature = len(palette) - 1
+    styles = list(palette)
+    styles[creature] = f"bold {palette[-1]} on {theme['bg']}"
+    parts = []
+    spans = []
+    pos = 0
 
     for y, runs in enumerate(
         sea_runs(width, height, phase, seed, direction,
                  origin, canvas, field_seed)
     ):
         if y:
-            text.append("\n")
+            parts.append("\n")
+            pos += 1
 
         for chunk, kind in runs:
-            if kind == 0:
-                text.append(chunk)
-            elif kind == len(palette) - 1:
-                text.append(chunk, style=creature_style)
-            else:
-                text.append(chunk, style=palette[kind])
+            end = pos + len(chunk)
 
-    return text
+            if kind:
+                spans.append(Span(pos, end, styles[kind]))
+
+            parts.append(chunk)
+            pos = end
+
+    return Content("".join(parts), spans)
 
 
 def context_meter(messages, limit_tokens) -> str:

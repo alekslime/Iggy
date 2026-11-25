@@ -476,6 +476,34 @@ class SplashAnimationTests(unittest.TestCase):
 
         asyncio.run(run())
 
+    def test_sea_text_is_content_matching_the_runs(self):
+        from textual.content import Content
+
+        from seacode.art import mosaic_palette, sea_runs
+        from seacode.tui import THEMES, sea_text
+
+        theme = next(iter(THEMES.values()))
+        content = sea_text(30, 12, 9, 1, 1, theme)
+        runs = sea_runs(30, 12, 9, 1, 1)
+        expected = "\n".join(
+            "".join(chunk for chunk, _ in row) for row in runs
+        )
+
+        self.assertIsInstance(content, Content)
+        self.assertEqual(content.plain, expected)
+
+        # Every span lies inside the text and never covers a newline.
+        for span in content.spans:
+            self.assertLess(span.start, span.end)
+            self.assertLessEqual(span.end, len(content.plain))
+            self.assertNotIn("\n", content.plain[span.start:span.end])
+
+        # One span per non-clear run, none for clear tiles.
+        self.assertEqual(
+            len(content.spans),
+            sum(1 for row in runs for _, kind in row if kind),
+        )
+
     def rule_text(self, app):
         return str(app.query_one("#splash-rule", Static).render())
 

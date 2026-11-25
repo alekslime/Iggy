@@ -22,6 +22,8 @@ from seacode.art import (
     dither_rule,
     mosaic_frame,
     mosaic_grid,
+    _FIELDS,
+    _mosaic_sampler,
     mosaic_palette,
     sea_runs,
     side_column,
@@ -256,6 +258,37 @@ class MosaicGridTests(unittest.TestCase):
             self.assertLessEqual(len(row), 20)
             for char in row:
                 self.assertIn(char, MOSAIC_GLYPHS)
+
+
+class MosaicSamplerTests(unittest.TestCase):
+
+    def test_steady_frames_use_one_field(self):
+        phase = MOSAIC_MODE_FRAMES + 5
+        sample = _mosaic_sampler(phase, 20, 10, 3)
+
+        self.assertEqual(
+            sample(4, 7), _FIELDS[1](4, 7, phase, 20, 10, 3)
+        )
+
+    def test_crossfade_blends_into_next_field(self):
+        # Last frame of a run: the next field is nearly fully mixed in.
+        phase = MOSAIC_MODE_FRAMES - 1
+        sample = _mosaic_sampler(phase, 20, 10, 3)
+        cur = _FIELDS[0](4, 7, phase, 20, 10, 3)
+        nxt = _FIELDS[1](4, 7, phase, 20, 10, 3)
+
+        self.assertAlmostEqual(
+            sample(4, 7), cur + (nxt - cur) * _mix(phase), places=9
+        )
+        self.assertLess(abs(sample(4, 7) - nxt), abs(cur - nxt) + 1e-9)
+
+
+def _mix(phase):
+    from seacode.art import _smooth
+
+    remaining = MOSAIC_MODE_FRAMES - phase % MOSAIC_MODE_FRAMES
+
+    return _smooth(1.0 - remaining / MOSAIC_FADE_FRAMES)
 
 
 class SharedCanvasTests(unittest.TestCase):

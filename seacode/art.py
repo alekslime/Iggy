@@ -244,24 +244,30 @@ def _field_bloom(tx, ty, t, w, h, seed):
 _FIELDS = (_field_drift, _field_ripple, _field_bloom)
 
 
-def _mosaic_value(tx, ty, phase, w, h, seed):
-    """The active field value, crossfading into the next pattern over
-    the last MOSAIC_FADE_FRAMES frames of each pattern's run."""
+def _mosaic_sampler(phase, w, h, seed):
+    """Field sampler for one frame: f(tx, ty) -> value. The active
+    pattern, and the crossfade into the next one over the last
+    MOSAIC_FADE_FRAMES frames of each run, are chosen once per frame
+    instead of once per tile."""
 
     slot, within = divmod(phase, MOSAIC_MODE_FRAMES)
     current = _FIELDS[slot % MOSAIC_MODES]
-    value = current(tx, ty, phase, w, h, seed)
-
     remaining = MOSAIC_MODE_FRAMES - within
 
-    if remaining <= MOSAIC_FADE_FRAMES:
-        following = _FIELDS[(slot + 1) % MOSAIC_MODES]
-        mix = _smooth(1.0 - remaining / MOSAIC_FADE_FRAMES)
-        value += (
+    if remaining > MOSAIC_FADE_FRAMES:
+        return lambda tx, ty: current(tx, ty, phase, w, h, seed)
+
+    following = _FIELDS[(slot + 1) % MOSAIC_MODES]
+    mix = _smooth(1.0 - remaining / MOSAIC_FADE_FRAMES)
+
+    def blended(tx, ty):
+        value = current(tx, ty, phase, w, h, seed)
+
+        return value + (
             following(tx, ty, phase, w, h, seed) - value
         ) * mix
 
-    return value
+    return blended
 
 
 def mosaic_grid(width: int, height: int, phase: int = 0, seed: int = 0,
@@ -291,37 +297,43 @@ def mosaic_grid(width: int, height: int, phase: int = 0, seed: int = 0,
                       // MOSAIC_TILE_W, 1)
         field_h = max(int(canvas[1]), 1)
 
+    sample = _mosaic_sampler(phase, field_w, field_h, seed)
+    first = ox // MOSAIC_TILE_W
+    last = (ox + width - 1) // MOSAIC_TILE_W
+    skew = ox - first * MOSAIC_TILE_W
+
+    # Fade factor per tile, the same for every row: it depends only on
+    # where the tile sits across the strip.
+    shade = []
+
+    for tx in range(first, last + 1):
+        if fade and tiles_w > 1:
+            x = max(tx * MOSAIC_TILE_W - ox, 0)
+            pos = (x // MOSAIC_TILE_W) / (tiles_w - 1)
+            edge = pos if fade > 0 else 1.0 - pos
+            # Full strength for the outer 40%, then ramp to clear.
+            shade.append(1.0 - _smooth(max(edge - 0.4, 0.0) / 0.6))
+        else:
+            shade.append(1.0)
+
+    top_level = MOSAIC_LEVELS - 1
     grid = []
 
     for y in range(height):
+        ty = oy + y
         row = []
-        cache = {}
 
-        for x in range(width):
-            tx = (ox + x) // MOSAIC_TILE_W
+        for tx, factor in zip(range(first, last + 1), shade):
+            value = sample(tx, ty)
+            # Static per-tile grain staggers when each tile flips.
+            grain = (_hash01(tx, ty, seed + 7) - 0.5) * 0.30
+            # Push mid values down so level 0 (clear) stays common.
+            value = max(value + grain, 0.0) ** 1.35
+            level = min(int(value * factor * MOSAIC_LEVELS), top_level)
+            row.append(level)
+            row.append(level)
 
-            if tx not in cache:
-                ty = oy + y
-                value = _mosaic_value(tx, ty, phase, field_w, field_h, seed)
-
-                # Static per-tile grain staggers when each tile flips.
-                grain = (_hash01(tx, ty, seed + 7) - 0.5) * 0.30
-                # Push mid values down so level 0 (clear) stays common.
-                value = max(value + grain, 0.0) ** 1.35
-
-                if fade and tiles_w > 1:
-                    local = x // MOSAIC_TILE_W
-                    pos = local / (tiles_w - 1)
-                    edge = pos if fade > 0 else 1.0 - pos
-                    # Full strength for the outer 40%, then ramp to clear.
-                    value *= 1.0 - _smooth(max(edge - 0.4, 0.0) / 0.6)
-
-                cache[tx] = min(int(value * MOSAIC_LEVELS),
-                                MOSAIC_LEVELS - 1)
-
-            row.append(cache[tx])
-
-        grid.append(row)
+        grid.append(row[skew:skew + width])
 
     return grid
 
