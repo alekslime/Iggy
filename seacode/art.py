@@ -1,6 +1,7 @@
 """SeaCode's ASCII mascot (provided by the project's human) plus the
 ordered-dither backdrop generator for the TUI splash screen."""
 
+from functools import lru_cache
 import math
 from textwrap import dedent
 
@@ -174,8 +175,10 @@ MOSAIC_MODES = 3
 CREATURE = MOSAIC_LEVELS
 
 
+@lru_cache(maxsize=1 << 16)
 def _hash01(ix: int, iy: int, seed: int = 0) -> float:
-    """Deterministic lattice hash in [0, 1)."""
+    """Deterministic lattice hash in [0, 1). Cached: the same lattice
+    points recur across neighbouring tiles and consecutive frames."""
 
     n = (
         ix * 374761393 + iy * 668265263 + seed * 2246822519
