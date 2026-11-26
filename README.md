@@ -163,6 +163,13 @@ back to the model is capped at about 8,000 characters: the start and
 the end are kept and the middle is replaced with a note saying how
 much was dropped.
 
+The read-only tools are capped the same way, for what the model is
+shown: `list_files` at 500 entries, `search_files` at 100 matches (300
+characters per line), `read_file` at 20,000 characters, `git_status`
+at 200 lines. Each cut ends with a note saying how much is missing; a
+cut `read_file` also warns the model not to rewrite the file with
+`write_file`. `git_status` has the same 30-second timeout as commands.
+
 This is a guard rail, not a sandbox. `python`, `pytest` and `git` run
 project code by design (a script, a `conftest.py`, a git hook), so
 with `--trust all` / `--yes` a model can still run arbitrary code as

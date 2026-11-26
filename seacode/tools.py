@@ -257,13 +257,20 @@ def git_status() -> str:
 
     project_root = get_project_root()
 
-    result = subprocess.run(
-        ["git", "status", "--short"],
-        cwd=project_root,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            ["git", "status", "--short"],
+            cwd=project_root,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=COMMAND_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        raise TimeoutError(
+            f"git status timed out after {COMMAND_TIMEOUT_SECONDS}s."
+        ) from None
 
     if result.returncode != 0:
         raise RuntimeError(
@@ -314,6 +321,82 @@ def truncate_output(
         + f"\n[... {omitted} characters omitted ...]\n"
         + text[len(text) - tail:]
     )
+
+
+# Caps on what the *model* is shown from the read-only tools, applied
+# by cap_tool_result() (seacode.agent.execute_tool). The tools
+# themselves still return everything: the M7 checks and the TUI read
+# them directly and need the full result.
+MAX_LIST_FILES_ENTRIES = 500
+MAX_SEARCH_MATCHES = 100
+MAX_SEARCH_LINE_CHARS = 300
+MAX_READ_FILE_CHARS = 20_000
+MAX_GIT_STATUS_LINES = 200
+
+
+def cap_tool_result(tool_name: str, result):
+    """Shorten a read-only tool's result before the model sees it.
+
+    Each cut ends with a note saying how much is missing and how to
+    get at the rest, so the model narrows its request instead of
+    assuming it saw everything. Results under the caps, errors, and
+    other tools pass through unchanged.
+    """
+
+    if tool_name == "list_files" and isinstance(result, list):
+        if len(result) > MAX_LIST_FILES_ENTRIES:
+            hidden = len(result) - MAX_LIST_FILES_ENTRIES
+            return result[:MAX_LIST_FILES_ENTRIES] + [
+                f"... {hidden} more files not shown "
+                "(list a subdirectory to see them)"
+            ]
+
+    elif tool_name == "search_files" and isinstance(result, list):
+        shortened = False
+        capped = []
+
+        for match in result[:MAX_SEARCH_MATCHES]:
+            text = match.get("text") if isinstance(match, dict) else None
+
+            if isinstance(text, str) and len(text) > MAX_SEARCH_LINE_CHARS:
+                match = {**match, "text": text[:MAX_SEARCH_LINE_CHARS] + "..."}
+                shortened = True
+
+            capped.append(match)
+
+        if len(result) > MAX_SEARCH_MATCHES:
+            hidden = len(result) - MAX_SEARCH_MATCHES
+            capped.append({
+                "note": f"{hidden} more matches not shown "
+                        "(search for something more specific)"
+            })
+        elif not shortened:
+            return result
+
+        return capped
+
+    elif tool_name == "read_file" and isinstance(result, str):
+        if len(result) > MAX_READ_FILE_CHARS:
+            hidden = len(result) - MAX_READ_FILE_CHARS
+            return (
+                result[:MAX_READ_FILE_CHARS]
+                + f"\n[... {hidden} more characters not shown. This is "
+                "only the start of the file: do NOT rewrite it with "
+                "write_file (that would delete the rest); use "
+                "replace_in_file on text you can see ...]"
+            )
+
+    elif tool_name == "git_status" and isinstance(result, str):
+        lines = result.splitlines()
+
+        if len(lines) > MAX_GIT_STATUS_LINES:
+            hidden = len(lines) - MAX_GIT_STATUS_LINES
+            return "\n".join(
+                lines[:MAX_GIT_STATUS_LINES]
+                + [f"... {hidden} more entries not shown"]
+            )
+
+    return result
 
 
 def run_command(command: str) -> str:

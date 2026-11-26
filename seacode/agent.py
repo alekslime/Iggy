@@ -25,6 +25,7 @@ from seacode.hooks import run_post_tool_hooks, run_pre_tool_hooks
 from seacode.sessions import save_session
 from seacode.tools import (
     TOOLS,
+    cap_tool_result,
     get_project_root,
     remove_created_file,
     restore_file_content,
@@ -371,7 +372,7 @@ def execute_tool(tool_name: str, arguments: dict):
     """Execute a registered tool: built-in, `task`, or dynamic."""
 
     if tool_name in TOOLS:
-        return TOOLS[tool_name](**arguments)
+        return cap_tool_result(tool_name, TOOLS[tool_name](**arguments))
 
     if tool_name == "task":
         return _run_subagent_task(arguments)
