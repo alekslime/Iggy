@@ -84,6 +84,124 @@ def is_command_allowed(command_name: str) -> bool:
     )
 
 
+# find options that execute programs or write files.
+FIND_FORBIDDEN_FLAGS = {
+    "-exec",
+    "-execdir",
+    "-ok",
+    "-okdir",
+    "-delete",
+    "-fprint",
+    "-fprint0",
+    "-fprintf",
+    "-fls",
+}
+
+# git options that smuggle in config or alternate helper programs.
+# GLOBAL ones are only dangerous before the subcommand (`git -c x=y
+# log`); after it, `-c` is a harmless flag (`git log -c`).
+GIT_FORBIDDEN_GLOBAL_FLAGS = {"-c", "--config-env", "--exec-path"}
+GIT_FORBIDDEN_FLAGS = {
+    "--upload-pack",
+    "--receive-pack",
+    "--exec",
+    "--ext-diff",
+    "--textconv",
+}
+
+
+def _path_candidate(arg: str) -> str | None:
+    """Pull the path-like part out of one command argument.
+
+    Handles bare paths, --opt=/path, and short options with an
+    attached value (-f/etc/passwd). Returns None for plain flags.
+    """
+
+    if arg.startswith("--"):
+        if "=" not in arg:
+            return None
+        return arg.split("=", 1)[1] or None
+
+    if arg.startswith("-") and len(arg) > 1:
+        attached = arg[2:]
+
+        if attached.startswith(("/", "~", "..")):
+            return attached
+
+        if "/" in attached:
+            return attached[attached.index("/"):]
+
+        return None
+
+    return arg or None
+
+
+def validate_command_args(args: list[str], project_root: Path) -> None:
+    """Refuse commands whose arguments reach outside the project or
+    use options that run other programs.
+
+    This is a guard rail, not a sandbox: python, pytest and git run
+    project code by design, so the approval prompt is still the real
+    boundary for them. What this closes is the cheap escapes: reading
+    ../../.ssh/id_rsa with cat, grepping /, find -exec, git -c, and so
+    on. It errs on the side of refusing (a grep pattern that is
+    literally "/" is refused too).
+    """
+
+    command_name = args[0]
+
+    if command_name == "find":
+        for arg in args[1:]:
+            if arg in FIND_FORBIDDEN_FLAGS:
+                raise PermissionError(
+                    f"find option not allowed: {arg}"
+                )
+
+    if command_name == "git":
+        rest = args[1:]
+        index = 0
+
+        # Global options come first; the first bare word is the
+        # subcommand. -C takes a separate value (path-checked below).
+        while index < len(rest) and rest[index].startswith("-"):
+            flag = rest[index].split("=", 1)[0]
+
+            if flag in GIT_FORBIDDEN_GLOBAL_FLAGS or (
+                flag.startswith("-c") and not flag.startswith("--")
+            ):
+                raise PermissionError(
+                    f"git option not allowed: {flag}"
+                )
+
+            index += 2 if flag == "-C" else 1
+
+        for arg in rest[index:]:
+            flag = arg.split("=", 1)[0]
+
+            if flag in GIT_FORBIDDEN_FLAGS:
+                raise PermissionError(
+                    f"git option not allowed: {flag}"
+                )
+
+    for arg in args[1:]:
+        candidate = _path_candidate(arg)
+
+        if candidate is None:
+            continue
+
+        if candidate.startswith("~"):
+            raise PermissionError(
+                f"Access denied: argument is outside the project: {arg}"
+            )
+
+        target = (project_root / candidate).resolve()
+
+        if not is_safe_path(target, project_root):
+            raise PermissionError(
+                f"Access denied: argument is outside the project: {arg}"
+            )
+
+
 def get_project_root() -> Path:
     """Return the root directory of the project.
 
@@ -150,10 +268,12 @@ def run_command(command: str) -> str:
             f"Command not allowed: {command_name}"
         )
 
+    project_root = get_project_root()
+
+    validate_command_args(args, project_root)
+
     if not request_permission(f"run: {command}"):
         return "Command denied by user."
-
-    project_root = get_project_root()
 
     result = subprocess.run(
         args,

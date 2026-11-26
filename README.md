@@ -26,8 +26,10 @@ cd /path/to/your/project
 seacode tui
 ```
 
-SeaCode operates on the current directory (or `--dir`). It never touches
-files outside it, and every modification asks for permission first.
+SeaCode operates on the current directory (or `--dir`). File tools
+refuse paths outside it, `run_command` refuses arguments that point
+outside it, and every modification asks for permission first. (See
+"Command safety" below for what that does and doesn't guarantee.)
 
 ## Commands
 
@@ -142,6 +144,24 @@ auto-approved), so you approve the actual edit, not just a filename.
 In the TUI, Scout mode still denies every modification regardless of
 trust.
 
+## Command safety
+
+`run_command` checks more than the command name. Before the permission
+prompt, every argument is resolved against the project root and the
+command is refused if any of them lands outside it (`../`, absolute
+paths, `~`, `--opt=/path`, symlinks that escape). `find` options that
+run programs or write files (`-exec`, `-delete`, `-fprint`, ...) and
+git options that inject config or helper programs (`git -c`,
+`--upload-pack`, `--ext-diff`, ...) are refused too. Refused commands
+never prompt you.
+
+This is a guard rail, not a sandbox. `python`, `pytest` and `git` run
+project code by design (a script, a `conftest.py`, a git hook), so
+with `--trust all` / `--yes` a model can still run arbitrary code as
+you. Use `ask` (the default) unless you trust the model and the
+project. The checks err on the side of refusing, so a grep pattern
+that is literally `/` is blocked.
+
 ## Sessions
 
 Conversations autosave per turn under `.seacode_sessions/` (local-only,
@@ -159,7 +179,7 @@ Tools:
 
 - `list_files`, `read_file`, `search_files`, `git_status` — inspection
 - `run_command` — an allowlisted set (`python`, `pytest`, `git`, `ls`,
-  `cat`, `grep`, …), permission-gated
+  `cat`, `grep`, …), argument-checked, permission-gated
 - `write_file`, `replace_in_file`, `delete_file` — modification, each
   permission-gated (with diff preview) and backed up to
   `.seacode_backups/` first
