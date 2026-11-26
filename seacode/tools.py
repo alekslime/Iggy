@@ -110,6 +110,13 @@ GIT_FORBIDDEN_FLAGS = {
 }
 
 
+# `git config` flags that only read.
+GIT_CONFIG_READ_FLAGS = {
+    "--get", "--get-all", "--get-regexp", "--get-urlmatch",
+    "--list", "-l", "--show-origin", "--show-scope",
+}
+
+
 def _path_candidate(arg: str) -> str | None:
     """Pull the path-like part out of one command argument.
 
@@ -182,6 +189,18 @@ def validate_command_args(args: list[str], project_root: Path) -> None:
                 raise PermissionError(
                     f"git option not allowed: {flag}"
                 )
+
+        subcommand = rest[index] if index < len(rest) else None
+
+        # `git config core.hooksPath ...` edits .git/config, the same
+        # trick write_file is blocked from. Reading config is fine.
+        if subcommand == "config" and not (
+            set(rest[index + 1:]) & GIT_CONFIG_READ_FLAGS
+        ):
+            raise PermissionError(
+                "git config can only read (use --get/--list); changing "
+                "it can make git run programs."
+            )
 
     for arg in args[1:]:
         candidate = _path_candidate(arg)
@@ -426,6 +445,35 @@ def is_backup_path(file_path: Path, project_root: Path) -> bool:
     return BACKUP_DIR_NAME in relative_path.parts
 
 
+def is_git_path(file_path: Path, project_root: Path) -> bool:
+    """Check whether a path is inside a .git directory (or is a `.git`
+    file, as in worktrees and submodules). Compared case-insensitively
+    so `.GIT` on a case-insensitive filesystem can't slip past."""
+
+    try:
+        relative_path = file_path.relative_to(project_root)
+    except ValueError:
+        return False
+
+    return any(part.casefold() == ".git" for part in relative_path.parts)
+
+
+def ensure_not_git_path(file_path: Path, project_root: Path) -> None:
+    """Refuse modifications under .git/.
+
+    Git runs programs named in its own metadata: hooks/pre-commit,
+    config entries such as core.fsmonitor, filter drivers. A write
+    there turns the next ordinary `git commit` into code execution, so
+    the model may not make one, whatever the approval prompt says.
+    """
+
+    if is_git_path(file_path, project_root):
+        raise PermissionError(
+            "Access denied: cannot modify .git/ (git hooks and config "
+            "can run programs)."
+        )
+
+
 def backup_file(file_path: Path, project_root: Path) -> str:
     """Save a timestamped copy of a file's current content before it's
     overwritten.
@@ -482,6 +530,8 @@ def write_file(path: str, content: str) -> str:
             "Access denied: cannot modify SeaCode's own backup directory "
             f"({BACKUP_DIR_NAME}/)."
         )
+
+    ensure_not_git_path(file_path, project_root)
 
     if file_path.exists() and not file_path.is_file():
         raise IsADirectoryError(
@@ -541,6 +591,8 @@ def restore_file_content(path: str, content: str) -> None:
             f"({BACKUP_DIR_NAME}/)."
         )
 
+    ensure_not_git_path(file_path, project_root)
+
     file_path.write_text(content, encoding="utf-8")
 
 
@@ -571,6 +623,8 @@ def remove_created_file(path: str) -> None:
             "Access denied: cannot modify SeaCode's own backup directory "
             f"({BACKUP_DIR_NAME}/)."
         )
+
+    ensure_not_git_path(file_path, project_root)
 
     if file_path.exists():
         file_path.unlink()
@@ -662,6 +716,8 @@ def undo_last_change(path: str | None = None) -> str:
             "Access denied: file is outside the project directory."
         )
 
+    ensure_not_git_path(target_path, project_root)
+
     before = ""
     restored = ""
 
@@ -722,6 +778,8 @@ def replace_in_file(
             "Access denied: cannot modify SeaCode's own backup directory "
             f"({BACKUP_DIR_NAME}/)."
         )
+
+    ensure_not_git_path(file_path, project_root)
 
     if not file_path.exists():
         raise FileNotFoundError(
@@ -795,6 +853,8 @@ def delete_file(path: str) -> str:
             "Access denied: cannot modify SeaCode's own backup directory "
             f"({BACKUP_DIR_NAME}/)."
         )
+
+    ensure_not_git_path(file_path, project_root)
 
     if not file_path.exists():
         raise FileNotFoundError(

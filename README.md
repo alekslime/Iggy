@@ -43,6 +43,7 @@ seacode sessions           # list saved conversation sessions
 seacode models             # list local Ollama models (--pull MODEL)
 seacode eval               # benchmark a local model on canned tasks
 seacode mcp                # list MCP servers/tools from .mcp.json
+seacode trust              # approve this project's MCP servers/hooks (--revoke to forget)
 seacode init               # write a starter seacode.toml in the project
 seacode --version
 ```
@@ -59,7 +60,8 @@ Options (REPL and TUI):
 | `--context-tokens` | `SEACODE_CONTEXT_TOKENS` | `16000` | wire context budget (see below) |
 | `--num-ctx` | `SEACODE_NUM_CTX` | `16384` | window requested from Ollama (its own default is only 4096) |
 | `--trust` | `SEACODE_TRUST` | `ask` | `ask`, `edits`, or `all` |
-| `--yes` | — | off | shorthand for `--trust all` |
+| `--yes` | — | off | shorthand for `--trust all` (does not trust project MCP servers/hooks) |
+| `--trust-project` | `SEACODE_TRUST_PROJECT=1` | off | run the project's `.mcp.json` servers and `[hooks]` without asking (scripts) |
 | `--resume [ID]` | — | off | resume latest (or matching) session |
 | `--no-stream` | — | off | wait for full replies |
 | `--dir` | `SEACODE_DIR` | current directory | project to work on |
@@ -168,6 +170,14 @@ you. Use `ask` (the default) unless you trust the model and the
 project. The checks err on the side of refusing, so a grep pattern
 that is literally `/` is blocked.
 
+Two more guards close the quiet routes to running code. The file tools
+(`write_file`, `replace_in_file`, `delete_file`, undo) refuse anything
+under `.git/`, because a hook or config entry written there would make
+the next ordinary `git commit` run it. And `git config` is read-only
+through `run_command` (`--get`, `--list`); setting `core.hooksPath` or
+`core.fsmonitor` is refused. Neither stops `python` or a project
+script from writing to `.git/` — see above.
+
 ## Sessions
 
 Conversations autosave per turn under `.seacode_sessions/` (local-only;
@@ -227,10 +237,21 @@ built-ins:
 {"mcpServers": {"notes": {"command": "python", "args": ["notes_mcp.py"]}}}
 ```
 
-`seacode mcp` lists what would be registered. MCP servers are
-user-configured and trusted: their tools aren't individually
-permission-gated, and one bad server is skipped with a warning rather
-than taking the session down.
+`seacode mcp` lists what would be registered. A server is a program
+from the project folder run as you, so SeaCode asks before starting a
+project's servers: the first time it shows each command and you answer
+yes-this-time, always, or no. "Always" is remembered for that exact
+config only (in `~/.config/seacode/trusted_projects.json`, outside the
+project, so a repo can't approve itself); adding a server or editing
+one asks again. `seacode trust` saves an approval without starting
+anything, `seacode trust --revoke` forgets it. With no terminal and
+no `--trust-project`, untrusted servers are skipped with a warning.
+`--yes` does not skip this prompt: it governs what the model may do,
+not what a cloned project may launch.
+
+Once approved, a server's tools aren't individually permission-gated,
+and one bad server is skipped with a warning rather than taking the
+session down.
 
 ## Hooks
 
@@ -238,8 +259,9 @@ than taking the session down.
 Each hook gets a JSON payload on stdin
 (`{"event", "tool", "arguments", "result"}`). A `pre_tool` hook that
 exits non-zero blocks the call and tells the model why; `post_tool`
-hooks can only warn. Hook commands are your own configuration, so
-they aren't subject to the `run_command` allowlist.
+hooks can only warn. Hook commands aren't subject to the
+`run_command` allowlist, so a project's hooks need the same one-time
+approval as its MCP servers (above) and are dropped if you decline.
 
 ## Project layout
 
@@ -255,6 +277,7 @@ seacode/tools.py         # tool implementations, sandboxing, backups
 seacode/dynamic_tools.py # runtime-registered tools (MCP, ...)
 seacode/mcp.py           # MCP stdio client + server manager
 seacode/hooks.py         # pre/post tool hooks from seacode.toml
+seacode/project_trust.py # approval of a project's MCP servers and hooks
 seacode/permissions.py   # approval prompts (with diffs) and trust levels
 seacode/sessions.py      # conversation save/resume
 seacode/config.py        # seacode.toml loading
@@ -282,5 +305,8 @@ directories, so the full suite runs offline in a few seconds.
 - Syntax validation covers Python; other languages rely on the
   content/target checks.
 - MCP support is stdio transport only (no remote/HTTP servers), and
-  MCP tools bypass the M7 modification checks — only run servers you
-  trust.
+  MCP tools bypass the M7 modification checks — only approve servers
+  you trust.
+- `extra_commands` in a project's `seacode.toml` is not covered by the
+  startup approval; it only widens the `run_command` allowlist, and
+  each command still goes through the argument guard and your prompt.

@@ -9,7 +9,8 @@ tools get the same transcript, guardrail, and permission treatment
 as built-ins -- with one deliberate exception: the M7 modification
 checks only classify the known built-in modification tools, so a
 dynamic tool that writes files is responsible for its own safety
-(MCP servers are user-configured and trusted by definition).
+(MCP servers are only started after the user approves them, see
+seacode.project_trust, and trusted from then on).
 
 Registration is process-global, like tools.set_extra_commands: the
 CLI registers MCP tools at startup; tests register fakes and clear

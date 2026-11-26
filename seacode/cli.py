@@ -24,6 +24,7 @@ import seacode.hooks as hooks_module
 import seacode.mcp as mcp_module
 from seacode import __version__
 from seacode import permissions as permissions_module
+from seacode import project_trust as project_trust_module
 from seacode import providers as providers_module
 from seacode.config import (
     load_model_profiles,
@@ -115,6 +116,15 @@ def add_common_arguments(parser):
         "--yes",
         action="store_true",
         help="Shorthand for --trust all.",
+    )
+    parser.add_argument(
+        "--trust-project",
+        action="store_true",
+        help=(
+            "Run this project's .mcp.json servers and seacode.toml hooks "
+            "without asking (for scripts; $SEACODE_TRUST_PROJECT=1). "
+            "--yes does not imply this."
+        ),
     )
     parser.add_argument(
         "--dir",
@@ -270,7 +280,34 @@ def build_parser() -> argparse.ArgumentParser:
             "(default: $SEACODE_DIR or the current directory)"
         ),
     )
+    mcp.add_argument(
+        "--trust-project",
+        action="store_true",
+        help="Start the servers without asking.",
+    )
     mcp.set_defaults(func=run_mcp)
+
+    trust_cmd = subparsers.add_parser(
+        "trust",
+        help=(
+            "Approve (or with --revoke, forget) this project's "
+            ".mcp.json servers and seacode.toml hooks."
+        ),
+    )
+    trust_cmd.add_argument(
+        "--dir",
+        default=None,
+        help=(
+            "Project directory to operate on "
+            "(default: $SEACODE_DIR or the current directory)"
+        ),
+    )
+    trust_cmd.add_argument(
+        "--revoke",
+        action="store_true",
+        help="Forget stored approvals for this project.",
+    )
+    trust_cmd.set_defaults(func=run_trust)
 
     init = subparsers.add_parser(
         "init",
@@ -338,14 +375,46 @@ def build_parser() -> argparse.ArgumentParser:
 _mcp_manager = None
 
 
-def _start_mcp(root) -> None:
+def _mcp_trusted(root, opt_in=False) -> bool:
+    """Ask before spawning the project's .mcp.json servers."""
+
+    config = mcp_module.load_mcp_config(root)
+
+    return project_trust_module.confirm(
+        root,
+        project_trust_module.KIND_MCP,
+        config,
+        project_trust_module.describe_mcp(config),
+        opt_in=opt_in,
+    )
+
+
+def _hooks_trusted(root, hooks, opt_in=False) -> bool:
+    """Ask before installing the project's seacode.toml hooks."""
+
+    payload = {k: v for k, v in hooks.items() if v}
+
+    return project_trust_module.confirm(
+        root,
+        project_trust_module.KIND_HOOKS,
+        payload,
+        project_trust_module.describe_hooks(hooks),
+        opt_in=opt_in,
+    )
+
+
+def _start_mcp(root, opt_in=False) -> None:
     """(Re)start MCP servers for this project, stopping any previous
     manager so repeated apply_common_options calls don't leak
-    subprocesses."""
+    subprocesses. Untrusted config is not started."""
 
     global _mcp_manager
 
     _stop_mcp()
+
+    if not _mcp_trusted(root, opt_in):
+        return
+
     _mcp_manager = mcp_module.MCPManager()
     _mcp_manager.start_all(root)
 
@@ -431,10 +500,19 @@ def apply_common_options(args) -> tuple:
     seacode_module.set_model_options(options)
 
     # Hooks from seacode.toml's [hooks] table, and MCP servers from
-    # .mcp.json (their tools register as dynamic tools). Starting MCP
-    # is a no-op when no .mcp.json exists.
-    hooks_module.set_hooks(hooks_module.load_hooks(root))
-    _start_mcp(root)
+    # .mcp.json (their tools register as dynamic tools). Both launch
+    # programs named by the project, so each needs the user's OK first
+    # (see seacode.project_trust); either is a no-op when the project
+    # has none configured.
+    opt_in = getattr(args, "trust_project", False)
+    project_hooks = hooks_module.load_hooks(root)
+
+    if _hooks_trusted(root, project_hooks, opt_in):
+        hooks_module.set_hooks(project_hooks)
+    else:
+        hooks_module.clear_hooks()
+
+    _start_mcp(root, opt_in)
 
     model = seacode_module.resolve_model(
         getattr(args, "model", None), config
@@ -699,6 +777,10 @@ def run_mcp(args) -> int:
         print(f"No MCP servers configured ({root}/.mcp.json).")
         return 0
 
+    if not _mcp_trusted(root, getattr(args, "trust_project", False)):
+        print("MCP servers not started (project not trusted).")
+        return 1
+
     manager = mcp_module.MCPManager()
 
     try:
@@ -720,6 +802,66 @@ def run_mcp(args) -> int:
 
     print(f"Registered dynamic tools: {', '.join(registered) or '(none)'}")
     return 0
+
+
+def run_trust(args) -> int:
+    if args.dir:
+        os.environ["SEACODE_DIR"] = args.dir
+
+    root = get_project_root()
+
+    if args.revoke:
+        if project_trust_module.forget(root):
+            print(f"Forgot stored approvals for {root}.")
+        else:
+            print(f"No stored approvals for {root}.")
+        return 0
+
+    mcp_config = mcp_module.load_mcp_config(root)
+    hooks = hooks_module.load_hooks(root)
+
+    if not mcp_config and not any(hooks.values()):
+        print(f"Nothing to trust: no MCP servers or hooks in {root}.")
+        return 0
+
+    approved = True
+
+    for kind, payload, lines in (
+        (
+            project_trust_module.KIND_MCP,
+            mcp_config,
+            project_trust_module.describe_mcp(mcp_config),
+        ),
+        (
+            project_trust_module.KIND_HOOKS,
+            {k: v for k, v in hooks.items() if v},
+            project_trust_module.describe_hooks(hooks),
+        ),
+    ):
+        if not payload:
+            continue
+
+        if project_trust_module.is_trusted(root, kind, payload):
+            print(f"Already trusted: {kind}.")
+            continue
+
+        print(f"{kind}:")
+
+        for line in lines:
+            print(f"    {line}")
+
+        try:
+            answer = input("  Trust this exact config? [y/N]: ")
+        except EOFError:
+            answer = ""
+
+        if answer.strip().lower() in ("y", "yes"):
+            project_trust_module.remember(root, kind, payload)
+            print("  Trusted.")
+        else:
+            approved = False
+
+    return 0 if approved else 1
 
 
 def run_init(args) -> int:

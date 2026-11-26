@@ -13,11 +13,13 @@ registered in seacode.dynamic_tools with namespaced names
 (`mcp_<server>_<tool>`) and MCP inputSchemas (already JSON Schema,
 the same shape function-calling uses).
 
-Servers are user-configured and therefore trusted: their tools are
-*not* permission-gated individually and MCP tool results are treated
-like any other tool result by the agent loop. A server that fails to
-start or answer is skipped with a warning -- one bad server must not
-take the whole session down.
+Servers are programs named by the project, so the CLI asks the user
+before starting them (see seacode.project_trust); this module only
+does the spawning. Once approved, their tools are *not*
+permission-gated individually and MCP tool results are treated like
+any other tool result by the agent loop. A server that fails to start
+or answer is skipped with a warning -- one bad server must not take
+the whole session down.
 """
 
 import json

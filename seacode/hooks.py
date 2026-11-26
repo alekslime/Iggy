@@ -19,7 +19,9 @@ when it isn't JSON-shaped). A pre_tool hook that exits non-zero
 (the hook's stdout/stderr, trimmed). Post-tool hooks can't block --
 their failures are only printed as warnings. Hooks are the user's
 own configuration, so their commands are not subject to the
-run_command allowlist; they run with shell=False and a timeout.
+run_command allowlist; they run with shell=False and a timeout. Because
+a cloned project can declare them, the CLI only installs them after
+the user approves (see seacode.project_trust).
 """
 
 import json
