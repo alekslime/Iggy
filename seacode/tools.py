@@ -11,6 +11,10 @@ from seacode.sessions import SESSIONS_DIR_NAME
 
 BACKUP_DIR_NAME = ".seacode_backups"
 
+# run_command's result when the user declines the prompt. A plain
+# string (not an error), so seacode.verify matches it by text.
+COMMAND_DENIED_MESSAGE = "Command denied by user."
+
 IGNORED_DIRECTORIES = {
     ".venv",
     ".git",
@@ -335,7 +339,7 @@ def run_command(command: str) -> str:
     validate_command_args(args, project_root)
 
     if not request_permission(f"run: {command}"):
-        return "Command denied by user."
+        return COMMAND_DENIED_MESSAGE
 
     try:
         result = subprocess.run(

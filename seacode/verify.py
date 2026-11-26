@@ -28,7 +28,7 @@ import sys
 from pathlib import Path
 
 import seacode.tools as _tools
-from seacode.tools import list_files, read_file
+from seacode.tools import COMMAND_DENIED_MESSAGE, list_files, read_file
 
 
 # Tools whose failure represents an incomplete modification, not just
@@ -77,6 +77,30 @@ SCOPE_LIMIT_KEYWORDS = (
 # again. list_files and git_status don't count -- they don't inspect
 # the change itself.
 VERIFICATION_TOOLS = frozenset({"run_command", "read_file", "search_files"})
+
+
+def counts_as_verification(tool_name: str, result) -> bool:
+    """Whether this tool call actually checked a modification.
+
+    Only a verification tool that really ran counts. A call that
+    errored (bad path, command not allowed, timeout, blocked by a
+    hook) or that the user denied looked at nothing, so it must not
+    clear the "unverified modification" flag that guards against
+    false "I tested it" claims. A command that ran and exited
+    non-zero still counts: a failing test run is a real check.
+    """
+
+    if tool_name not in VERIFICATION_TOOLS:
+        return False
+
+    if isinstance(result, dict) and "error" in result:
+        return False
+
+    if tool_name == "run_command" and isinstance(result, str) \
+            and result.strip() == COMMAND_DENIED_MESSAGE:
+        return False
+
+    return True
 
 # Phrases that indicate the final answer is asserting verification
 # happened. Practical keyword list, not NLP -- like M7.6's rewrite-

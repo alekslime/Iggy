@@ -42,7 +42,7 @@ from seacode.verify import (
     SCOPE_LIMIT_KEYWORDS,
     TARGETED_EDIT_PRESERVATION_THRESHOLD,
     VERIFICATION_CLAIM_KEYWORDS,
-    VERIFICATION_TOOLS,
+    counts_as_verification,
     check_incomplete_multi_target_edit,
     check_scope_creep,
     check_unnecessary_full_rewrite,
@@ -1388,7 +1388,7 @@ def run_agent(
         if outcome == "success":
             unverified_modification_pending = True
             verification_claim_recovery_attempts = 0
-        elif tool_name in VERIFICATION_TOOLS:
+        elif counts_as_verification(tool_name, result):
             unverified_modification_pending = False
 
         # M7.6: a tool call can report success while still not having
