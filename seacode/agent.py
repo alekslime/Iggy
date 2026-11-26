@@ -1,8 +1,5 @@
-import itertools
 import json
 import os
-import re
-import sys
 import threading
 import time
 
@@ -62,6 +59,44 @@ from seacode.verify import (
     verify_python_syntax,
     verify_semantic_edit,
     verify_target_file,
+)
+
+# Terminal rendering, action parsing and prompt text live in their own
+# modules (seacode.render / actions / prompts). Their names are imported
+# here (and re-exported) so existing callers and tests using
+# `seacode.agent.<name>` keep working.
+from seacode.actions import (
+    _coerce_arguments,
+    _message_field,
+    clean_model_response,
+    extract_chunk_content,
+    extract_chunk_tool_calls,
+    find_embedded_action,
+    normalize_action,
+    normalize_tool_call,
+    normalize_tool_name,
+    parse_action,
+)
+from seacode.prompts import (
+    SYSTEM_PROMPT,
+    SYSTEM_PROMPT_SMALL,
+    model_size_billions,
+)
+from seacode.render import (
+    MAX_RESULT_LINES,
+    SPINNER_FRAMES,
+    SPINNER_INTERVAL,
+    SPINNER_TEXT,
+    _bold,
+    _color_enabled,
+    _cyan,
+    _dim,
+    _green,
+    _paint,
+    _ThinkingSpinner,
+    format_duration,
+    format_tool_call,
+    print_tool_result,
 )
 
 
@@ -256,168 +291,6 @@ MODEL = resolve_model()
 client = ollama.Client(host=resolve_host())
 
 
-SYSTEM_PROMPT = """
-You are a local computer engineering agent.
-
-You have access to tools and are expected to ACT on tasks when the user asks you to modify the project.
-
-When you need to act, call one of the available tools, with complete
-arguments. Independent calls may go out together in one block; they
-run in order.
-
-If native tool calling is not available to you, make a tool call by
-replying with ONLY one JSON object in this exact form, and no other
-text before or after it:
-{"name": "tool_name", "arguments": {"argument": "value"}}
-
-When you are completely finished and no more tools are needed, answer
-in plain prose. Never emit a tool call and a final answer together:
-either keep working, or answer.
-
-IMPORTANT TASK RULES:
-
-1. If the user asks you to INSPECT, CREATE, MODIFY, CHANGE, FIX, REMOVE, REFACTOR, IMPLEMENT, UPDATE, or otherwise alter something in the project, this is an ACTION REQUEST.
-
-2. For an ACTION REQUEST:
-   - Do not simply tell the user how to do it.
-   - Do not give your final answer before performing the requested work.
-   - Inspect the relevant project files first.
-   - Determine what needs to change.
-   - Use the appropriate modification tool.
-   - Continue working until the requested task is completed or you cannot safely complete it.
-
-3. If the user asks for information about the project:
-   - Use tools when necessary to inspect the project.
-   - Answer only after you have enough information.
-
-4. After modifying something, verify the result when possible.
-
-5. Never claim that a change was completed unless the modification tool actually succeeded.
-
-6. Never claim that a change was verified unless you actually performed verification.
-
-Before answering, ask yourself:
-
-1. Is this an action request or an information request?
-2. If it is an action request, what files do I need to inspect?
-3. Have I inspected the relevant code?
-4. What is the smallest safe change that completes the task?
-5. Which modification tool should I use?
-6. Has the modification actually succeeded?
-7. Can I verify the result?
-8. Only after completing the task should I give my final answer.
-
-TOOL SELECTION:
-
-- Use list_files when you need to discover the project structure.
-- Use search_files when you need to find specific code, variables, functions, classes, imports, or text.
-- Use read_file when you need to understand the contents of a file.
-- Use replace_in_file when making a targeted change to existing code.
-- Prefer replace_in_file over write_file when modifying an existing file.
-- Use write_file when creating a new file or when replacing an entire file is genuinely necessary.
-- Use delete_file when the user asks to remove a file. Read it first; the content is backed up automatically.
-- Use undo_last_change to revert your own most recent modification when verification shows it was wrong.
-- Use run_command when a command is needed for inspection or verification.
-- Use git_status when the user asks about Git status, modified files, untracked files, staged files, or changes in the working tree.
-- Use task when a self-contained subtask (exploring one area, answering one research question) can be delegated to a subagent; give it complete instructions, since it cannot see this conversation. Additional tools whose names start with mcp_ come from user-configured MCP servers; use them as their descriptions indicate.
-
-TOOL DETAILS:
-
-- list_files(root): lists relevant files inside a project directory.
-- read_file(path): reads a text file inside the project directory.
-- search_files(query): searches project files for matching text and returns file names, line numbers, and matching lines.
-- git_status(): returns the current Git working tree status.
-- run_command(command): runs an approved command inside the project.
-- write_file(path, content): writes or replaces a file inside the project after requesting user permission.
-- replace_in_file(path, old_text, new_text): replaces one exact piece of existing text inside a project file after requesting user permission.
-- delete_file(path): deletes a file inside the project after requesting user permission. The content is backed up first and can be recovered.
-- undo_last_change(path): restores a file from its most recent backup after requesting user permission. Omit path to undo the most recent backup of any file.
-
-SAFETY AND MODIFICATION RULES:
-
-- Never access files outside the project directory.
-- Never invent directory names or paths.
-- Tool arguments must refer to real paths or values supported by the tools.
-- Before modifying an existing file, read it first unless its relevant contents are already available.
-- Do not modify files blindly.
-- Make the smallest change necessary to complete the user's request.
-- Preserve existing code and behavior unless the user explicitly asks for a behavior change.
-- When using replace_in_file, old_text must match exactly one occurrence.
-- If the exact text does not exist, do not invent a replacement.
-- If the exact text occurs more than once, do not make the change.
-- If a modification is denied, do not pretend that it succeeded.
-- If a tool returns an error, treat the operation as unsuccessful.
-- Do not invent tools.
-- Do not paste large tool results back into your answer; summarize instead.
-- After receiving a tool result, decide what to do next.
-
-SEARCH RULES:
-
-- For search_files, use short, exact keywords rather than descriptive phrases.
-- For example, search for "ollama", not "Ollama usage".
-- For list_files, use "." for the project root unless you have a specific directory name from a previous tool result.
-- Never invent paths.
-
-COMPLETION RULE:
-
-For an action request, do not stop simply because you have figured out what should be changed.
-
-The task is only complete after:
-- the requested modification was successfully applied, OR
-- the agent has determined that it cannot safely complete the task.
-
-When possible, perform a verification step after the modification.
-
-Distinguish clearly between:
-- planned
-- modified
-- verified
-
-Only report what actually happened.
-"""
-
-
-SYSTEM_PROMPT_SMALL = """
-You are SeaCode, a coding agent working inside one project directory.
-
-ACT on requests to inspect, create, change, fix, or test something.
-Never just describe a plan, and never claim you did something you did
-not do.
-
-Make exactly one tool call per reply. If native tool calling is not
-available, reply with ONLY this JSON and nothing else:
-{"name": "tool_name", "arguments": {"argument": "value"}}
-When completely finished, reply in plain prose with no JSON.
-
-Tools: list_files(root), read_file(path), search_files(query),
-git_status(), run_command(command),
-write_file(path, content), replace_in_file(path, old_text, new_text),
-delete_file(path), undo_last_change(path), task(prompt).
-
-Rules:
-- Read a file before modifying it. Prefer replace_in_file for edits;
-  old_text must match exactly once.
-- Make the smallest change that completes the request. Do not touch
-  files the request did not mention.
-- Never access files outside the project. Never invent paths or tools.
-- After a modification, verify it if you can (read it back or run a
-  relevant command). Never claim verification you did not perform.
-- If a tool fails, read the error, fix your arguments, and retry.
-- A message saying your last edit passed SeaCode verification means
-  the task is done: give your final answer and call no more tools.
-"""
-
-
-def model_size_billions(model) -> float | None:
-    """Parameter size parsed from a model tag ("qwen2.5-coder:7b" ->
-    7.0, "llama3.2" -> None)."""
-
-    if not isinstance(model, str):
-        return None
-
-    match = re.search(r"(\d+(?:\.\d+)?)\s*b\b", model.lower())
-
-    return float(match.group(1)) if match else None
 
 
 def system_prompt_for_model(model=None) -> str:
@@ -561,385 +434,10 @@ def _run_subagent_task(arguments: dict):
     return answer
 
 
-def clean_model_response(raw_response: str) -> str:
-    """Remove Markdown code fences from the model response."""
 
-    clean_response = raw_response.strip()
 
-    if clean_response.startswith("```"):
-        lines = clean_response.splitlines()
 
-        if lines[0].startswith("```"):
-            lines = lines[1:]
 
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
-
-        clean_response = "\n".join(lines).strip()
-
-    return clean_response
-
-
-def parse_action(raw_response: str) -> dict:
-    """Convert the model's response into a tool/action dictionary.
-
-    Tolerates a leading JSON object followed by extra material
-    (a second object, trailing prose): small models often emit
-    both, and the first complete object is the actionable one.
-    """
-
-    clean_response = clean_model_response(raw_response)
-
-    try:
-        action = json.loads(clean_response)
-    except json.JSONDecodeError:
-        start = clean_response.find("{")
-
-        if start == -1:
-            raise
-
-        action, _ = json.JSONDecoder().raw_decode(
-            clean_response[start:]
-        )
-
-    if not isinstance(action, dict):
-        raise ValueError("Model response must be a JSON object.")
-
-    return action
-
-
-def normalize_action(action: dict) -> dict:
-    """Normalize the dialects models actually emit into the canonical
-    {"tool": name, "arguments": {...}} / {"tool": "none", "answer": ...}
-    shapes the loop consumes.
-
-    Observed in the wild (qwen2.5-coder via Ollama ignores native
-    tool_calls and writes JSON by hand, in whatever shape its
-    training favored):
-
-      {"name": "replace_in_file", "arguments": {...}}   (OpenAI-ish)
-      {"function": "read_file", "parameters": {...}}
-      {"tool_calls": [{"function": {"name": ..., "arguments": ...}}]}
-      {"answer": "..."}                                  (final reply)
-
-    Arguments given as a JSON string are parsed; an unparseable
-    string is passed through so execution fails visibly and the
-    recovery loop can correct it, rather than silently dropping it.
-    """
-
-    if not isinstance(action, dict):
-        return action
-
-    if action.get("tool"):
-        return action
-
-    name = action.get("name") or action.get("function")
-
-    if not isinstance(name, str) or not name:
-        calls = action.get("tool_calls")
-
-        if isinstance(calls, list) and calls and isinstance(calls[0], dict):
-            function = calls[0].get("function") or {}
-            name = function.get("name")
-            if isinstance(name, str) and name:
-                action = {
-                    "tool": name,
-                    "arguments": function.get("arguments", {}),
-                }
-                return _coerce_arguments(action)
-        elif "answer" in action:
-            return {"tool": "none", "answer": action.get("answer") or ""}
-        else:
-            return action
-    else:
-        action = {
-            "tool": name,
-            "arguments": (
-                action.get("arguments")
-                if action.get("arguments") is not None
-                else action.get("parameters", {})
-            ),
-        }
-
-    return _coerce_arguments(action)
-
-
-def _coerce_arguments(action: dict) -> dict:
-    arguments = action.get("arguments")
-
-    if isinstance(arguments, str):
-        try:
-            parsed = json.loads(arguments) if arguments.strip() else {}
-        except ValueError:
-            return action
-
-        if isinstance(parsed, dict):
-            action["arguments"] = parsed
-
-    return action
-
-
-def find_embedded_action(text: str):
-    """First recognizable action object embedded in prose, or None.
-
-    Small models narrate a plan ("Step 2: {...} Step 3: {...}")
-    instead of emitting one bare call. The enclosing prose must not
-    be mistaken for a final answer -- it usually ends by claiming
-    work that never ran.
-    """
-
-    if not isinstance(text, str):
-        return None
-
-    decoder = json.JSONDecoder()
-
-    for index, char in enumerate(text):
-        if char != "{":
-            continue
-
-        try:
-            candidate, _ = decoder.raw_decode(text[index:])
-        except ValueError:
-            continue
-
-        if isinstance(candidate, dict) and (
-            candidate.get("tool")
-            or candidate.get("name")
-            or candidate.get("function")
-            or candidate.get("tool_calls")
-        ):
-            return candidate
-
-    return None
-
-
-def extract_chunk_content(chunk) -> str:
-    """Pull the text delta out of one streamed chat chunk.
-
-    Accepts both the ollama client's object form (chunk.message.content)
-    and the plain-dict form, returning "" when a chunk carries no text
-    (e.g. the final done chunk).
-    """
-
-    message = getattr(chunk, "message", None)
-
-    if message is None and isinstance(chunk, dict):
-        message = chunk.get("message")
-
-    if message is None:
-        return ""
-
-    content = getattr(message, "content", None)
-
-    if content is None and isinstance(message, dict):
-        content = message.get("content")
-
-    return content or ""
-
-
-def _message_field(message, name, default=None):
-    """Read object-or-dict message fields (ollama models, plain dicts,
-    and test doubles all flow through here)."""
-
-    value = getattr(message, name, None)
-
-    if value is None and isinstance(message, dict):
-        value = message.get(name, default)
-
-    return default if value is None else value
-
-
-def normalize_tool_call(call):
-    """(name, arguments, raw) from one native tool call, object- or
-    dict-form. arguments is a dict, or None when present but not
-    parseable (raw keeps the original for the error message)."""
-
-    function = _message_field(call, "function", {}) or {}
-    name = _message_field(function, "name", "") or ""
-    args = _message_field(function, "arguments", None)
-    raw = ""
-
-    if isinstance(args, str):
-        raw = args
-
-        try:
-            args = json.loads(args) if args else {}
-        except ValueError:
-            args = None
-    elif args is not None and not isinstance(args, dict):
-        raw = json.dumps(args)
-        args = None
-
-    if args is None and not raw:
-        args = {}
-
-    return name, args, raw
-
-
-def extract_chunk_tool_calls(chunk):
-    """Tool calls from one streamed chunk (usually just the final one
-    carries them)."""
-
-    message = getattr(chunk, "message", None)
-
-    if message is None and isinstance(chunk, dict):
-        message = chunk.get("message")
-
-    if message is None:
-        return []
-
-    raw_calls = _message_field(message, "tool_calls", None) or []
-
-    return [normalize_tool_call(call) for call in raw_calls]
-
-
-# -----------------------------------------------------------------------
-# Transcript output -- everything run_agent prints is plain text (no
-# ANSI codes): the TUI parses these exact formats to style its feed,
-# so any change here must update tui.py's classifier in lockstep.
-# Only run_repl's own header/prompt/answer prints use color, and only
-# on a tty without NO_COLOR set.
-# -----------------------------------------------------------------------
-
-MAX_RESULT_LINES = 8
-
-SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
-SPINNER_TEXT = " thinking…"
-SPINNER_INTERVAL = 0.08
-
-
-def _color_enabled() -> bool:
-    return sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
-
-
-def _paint(text: str, code: str) -> str:
-    if not _color_enabled():
-        return text
-    return f"\033[{code}m{text}\033[0m"
-
-
-def _bold(text: str) -> str:
-    return _paint(text, "1")
-
-
-def _dim(text: str) -> str:
-    return _paint(text, "2")
-
-
-def _cyan(text: str) -> str:
-    return _paint(text, "36")
-
-
-def _green(text: str) -> str:
-    return _paint(text, "32")
-
-
-def format_tool_call(tool_name: str, arguments) -> str:
-    """One-line `● tool target` summary for the transcript, where
-    target is the path/command/query being acted on, if any."""
-
-    target = ""
-
-    if isinstance(arguments, dict):
-        for key in ("path", "command", "query", "root", "prompt"):
-            value = arguments.get(key)
-            if isinstance(value, str) and value:
-                target = value
-                break
-
-    line = f"● {tool_name}"
-
-    if target:
-        if len(target) > 70:
-            target = target[:67] + "..."
-        line += f" {target}"
-
-    return line
-
-
-def print_tool_result(result) -> None:
-    """Print a tool's result, dimmed by the caller contract: first
-    line marked ⎿, continuations indented, long output truncated."""
-
-    if isinstance(result, (dict, list)):
-        text = json.dumps(result, indent=2)
-    else:
-        text = str(result)
-
-    lines = text.splitlines() or [""]
-
-    for index, line in enumerate(lines[:MAX_RESULT_LINES]):
-        if index == 0:
-            print(f"  ⎿ {line}".rstrip())
-        else:
-            print(f"    {line}".rstrip())
-
-    hidden = len(lines) - MAX_RESULT_LINES
-
-    if hidden > 0:
-        print(f"  … (+{hidden} more lines)")
-
-
-def format_duration(seconds: float) -> str:
-    """Compact turn duration: "3s", "1m02s"."""
-
-    total = max(int(seconds), 0)
-    minutes, secs = divmod(total, 60)
-
-    if minutes:
-        return f"{minutes}m{secs:02d}s"
-
-    return f"{secs}s"
-
-
-class _ThinkingSpinner:
-    """Transient braille spinner while the model thinks. Active only
-    on a tty; everywhere else (pipes, tests) it's a silent no-op."""
-
-    def __init__(self, enabled: bool):
-        self.enabled = enabled and sys.stdout.isatty()
-        self._stop = threading.Event()
-        self._thread = None
-
-    def __enter__(self):
-        if not self.enabled:
-            return self
-
-        self._thread = threading.Thread(
-            target=self._spin, daemon=True
-        )
-        self._thread.start()
-
-        return self
-
-    def _spin(self) -> None:
-        for frame in itertools.cycle(SPINNER_FRAMES):
-            if self._stop.wait(SPINNER_INTERVAL):
-                break
-            print(f"\r{frame}{SPINNER_TEXT}", end="", flush=True)
-
-    def __exit__(self, *exc_info) -> bool:
-        if not self.enabled:
-            return False
-
-        self._stop.set()
-        self._thread.join(timeout=1.0)
-        width = len(SPINNER_FRAMES[0] + SPINNER_TEXT)
-        print("\r" + " " * width + "\r", end="", flush=True)
-
-        return False
-
-
-def normalize_tool_name(tool_name):
-    """Normalize tool names returned by the model."""
-
-    if not isinstance(tool_name, str):
-        return tool_name
-
-    if "(" in tool_name:
-        tool_name = tool_name.split("(", 1)[0].strip()
-
-    return tool_name
 
 
 def run_agent(

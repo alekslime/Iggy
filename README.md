@@ -243,7 +243,10 @@ they aren't subject to the `run_command` allowlist.
 ## Project layout
 
 ```text
-seacode/agent.py         # the tool loop, system prompt, recovery policy
+seacode/agent.py         # the tool loop and recovery policy (run_agent)
+seacode/actions.py       # model output -> tool actions, stream chunk parsing
+seacode/prompts.py       # system prompt text, model-size detection
+seacode/render.py        # transcript formatting, colors, spinner
 seacode/verify.py        # M7 guardrail checks (pure, unit-testable)
 seacode/providers.py     # ollama + OpenAI-compatible clients, tool schemas
 seacode/context.py       # project instructions, context-window trimming
