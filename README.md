@@ -155,6 +155,12 @@ git options that inject config or helper programs (`git -c`,
 `--upload-pack`, `--ext-diff`, ...) are refused too. Refused commands
 never prompt you.
 
+Commands run with stdin closed and a 30-second timeout (a timeout
+kills the process and reports whatever it had printed). Output sent
+back to the model is capped at about 8,000 characters: the start and
+the end are kept and the middle is replaced with a note saying how
+much was dropped.
+
 This is a guard rail, not a sandbox. `python`, `pytest` and `git` run
 project code by design (a script, a `conftest.py`, a git hook), so
 with `--trust all` / `--yes` a model can still run arbitrary code as

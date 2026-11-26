@@ -250,6 +250,49 @@ def git_status() -> str:
     return result.stdout.strip()
 
 
+COMMAND_TIMEOUT_SECONDS = 30
+
+# Cap on command output sent back to the model. A chatty command
+# (find /, a verbose test run) would otherwise flood a small local
+# model's context window. Head + tail are kept because the end of
+# output (a pytest summary, an error) is usually the useful part.
+MAX_COMMAND_OUTPUT_CHARS = 8_000
+COMMAND_OUTPUT_HEAD_FRACTION = 0.6
+
+
+def _to_text(value) -> str:
+    """Normalize captured process output to str. TimeoutExpired hands
+    back bytes (or None) even when the run used text=True."""
+
+    if value is None:
+        return ""
+
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+
+    return value
+
+
+def truncate_output(
+    text: str, limit: int = MAX_COMMAND_OUTPUT_CHARS
+) -> str:
+    """Shorten text to about `limit` characters, keeping the start and
+    the end and saying how much was dropped from the middle."""
+
+    if len(text) <= limit:
+        return text
+
+    head = int(limit * COMMAND_OUTPUT_HEAD_FRACTION)
+    tail = limit - head
+    omitted = len(text) - head - tail
+
+    return (
+        text[:head]
+        + f"\n[... {omitted} characters omitted ...]\n"
+        + text[len(text) - tail:]
+    )
+
+
 def run_command(command: str) -> str:
     """Run an allowed command after requesting user permission."""
 
@@ -275,22 +318,39 @@ def run_command(command: str) -> str:
     if not request_permission(f"run: {command}"):
         return "Command denied by user."
 
-    result = subprocess.run(
-        args,
-        cwd=project_root,
-        capture_output=True,
-        text=True,
-        timeout=30,
-        check=False,
-        shell=False,
-    )
+    try:
+        result = subprocess.run(
+            args,
+            cwd=project_root,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=COMMAND_TIMEOUT_SECONDS,
+            check=False,
+            shell=False,
+        )
+
+    except subprocess.TimeoutExpired as e:
+        partial = truncate_output(
+            (_to_text(e.stdout) + _to_text(e.stderr)).strip()
+        )
+
+        message = (
+            f"Command timed out after {COMMAND_TIMEOUT_SECONDS}s "
+            "and was killed."
+        )
+
+        if partial:
+            message += f"\nPartial output:\n{partial}"
+
+        raise TimeoutError(message) from None
 
     output = result.stdout
 
     if result.stderr:
         output += result.stderr
 
-    return output.strip()
+    return truncate_output(output.strip())
 
 
 def list_files(root: str = ".") -> list[str]:
