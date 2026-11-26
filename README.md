@@ -20,7 +20,7 @@ Install and run, from the project you want to work on:
 ```sh
 git clone https://github.com/alekslime/SeaCode
 cd SeaCode
-/usr/bin/python3.14 -m venv .venv
+python3 -m venv .venv
 .venv/bin/pip install -e .
 cd /path/to/your/project
 seacode tui
@@ -170,8 +170,9 @@ that is literally `/` is blocked.
 
 ## Sessions
 
-Conversations autosave per turn under `.seacode_sessions/` (local-only,
-never committed). Resume with `seacode repl --resume` (latest) or
+Conversations autosave per turn under `.seacode_sessions/` (local-only;
+add it and `.seacode_backups/` to your project's `.gitignore` so they
+stay out of commits). Resume with `seacode repl --resume` (latest) or
 `seacode repl --resume <id-prefix>`; the TUI takes the same flag. A
 resumed session keeps its model unless `--model` overrides it.
 

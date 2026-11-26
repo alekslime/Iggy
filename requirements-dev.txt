@@ -1,0 +1,2 @@
+# Runtime + test dependencies (pytest), from pyproject.toml.
+-e .[dev]

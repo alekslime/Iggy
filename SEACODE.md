@@ -1,7 +1,7 @@
 # SeaCode project instructions
 
 - Python 3.12+, no frameworks beyond the declared deps (ollama, httpx,
-  textual; pytest for dev). Keep new modules stdlib-first.
+  textual, rich; pytest for dev). Keep new modules stdlib-first.
 - Tests are unittest-style, run offline, and must never need an Ollama
   server or the network: script the model's replies, run tools against
   temp directories, use httpx MockTransport / fake stdio servers.
